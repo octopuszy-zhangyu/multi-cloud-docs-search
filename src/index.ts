@@ -15,7 +15,7 @@ export default {
   },
 };
 
-class CtyunDocsMCP extends McpAgent<Env, unknown> {
+export class CtyunDocsMCP extends McpAgent<Env, unknown> {
   server = new McpServer(
     {
       name: "ctyun-docs-search",
