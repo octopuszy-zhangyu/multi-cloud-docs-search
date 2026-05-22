@@ -1,6 +1,7 @@
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { McpAgent } from "agents/mcp";
 import { z } from "zod";
+import * as cheerio from "cheerio";
 import { CtyunApi } from "./api";
 
 interface Env {}
@@ -45,12 +46,20 @@ export class CtyunDocsMCP extends McpAgent<Env, unknown> {
         annotations: { readOnlyHint: true },
       },
       async () => {
-        const data = await this.api.listProducts();
+        const raw = await this.api.listProducts();
+        const categories = raw.data?.list?.map((cat) => ({
+          categoryName: cat.bookClassName,
+          products: cat.list.map((p) => ({
+            bookId: p.bookId,
+            name: p.bookName,
+            description: p.note,
+          })),
+        }));
         return {
           content: [
             {
               type: "text",
-              text: JSON.stringify(data, null, 2),
+              text: JSON.stringify(categories, null, 2),
             },
           ],
         };
@@ -69,11 +78,15 @@ export class CtyunDocsMCP extends McpAgent<Env, unknown> {
       },
       async ({ bookId }: { bookId: string }) => {
         const items = await this.api.getDocumentToc(bookId);
+        const result = items.map((item) => ({
+          pageId: item.pageId,
+          title: item.title,
+        }));
         return {
           content: [
             {
               type: "text",
-              text: JSON.stringify(items, null, 2),
+              text: JSON.stringify(result, null, 2),
             },
           ],
         };
@@ -98,12 +111,20 @@ export class CtyunDocsMCP extends McpAgent<Env, unknown> {
         bookId: string;
         keyword: string;
       }) => {
-        const data = await this.api.searchDocuments(bookId, keyword);
+        const raw = await this.api.searchDocuments(bookId, keyword);
+        const result = {
+          bookName: raw.data?.bookName,
+          pages: (raw.data?.pages ?? []).map((p) => ({
+            pageId: p.pageId,
+            title: p.title,
+            description: p.note,
+          })),
+        };
         return {
           content: [
             {
               type: "text",
-              text: JSON.stringify(data, null, 2),
+              text: JSON.stringify(result, null, 2),
             },
           ],
         };
@@ -121,12 +142,22 @@ export class CtyunDocsMCP extends McpAgent<Env, unknown> {
         annotations: { readOnlyHint: true },
       },
       async ({ pageId }: { pageId: string }) => {
-        const data = await this.api.getPageMetadata(pageId);
+        const raw = await this.api.getPageMetadata(pageId);
+        const d = raw.data;
+        const result = {
+          pageId: d.pageId,
+          title: d.title,
+          note: d.note,
+          contentPath: d.contentPath,
+          chapterId: d.chapterId,
+          bookId: String(d.bookId),
+          updateDate: d.updateDateShow,
+        };
         return {
           content: [
             {
               type: "text",
-              text: JSON.stringify(data, null, 2),
+              text: JSON.stringify(result, null, 2),
             },
           ],
         };
@@ -144,12 +175,20 @@ export class CtyunDocsMCP extends McpAgent<Env, unknown> {
         annotations: { readOnlyHint: true },
       },
       async ({ contentPath }: { contentPath: string }) => {
-        const content = await this.api.getPageContent(contentPath);
+        const html = await this.api.getPageContent(contentPath);
+        const $ = cheerio.load(html);
+        // 移除 script、style、img 等标签
+        $("script, style, img, figure, section.simple-box").remove();
+        const text = $("body")
+          .text()
+          .replace(/\s+/g, " ")
+          .replace(/>\s+</g, "><")
+          .trim();
         return {
           content: [
             {
               type: "text",
-              text: content,
+              text: text || "(空内容)",
             },
           ],
         };
