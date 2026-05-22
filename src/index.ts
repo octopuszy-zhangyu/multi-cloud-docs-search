@@ -194,10 +194,11 @@ export class CtyunDocsMCP extends McpAgent<Env, unknown> {
         const html = await this.api.getPageContent(contentPath);
         const $ = cheerio.load(html);
 
-        // 移除不需要的标签，但保留表格、列表、代码块等结构化内容
+        // 移除不需要的标签
         $("script, style, img, nav, footer, header, aside, .ad, .advertisement").remove();
 
-        // 将表格转换为 Markdown 格式
+        // 将表格转换为 Markdown 格式，并保存到占位符
+        const markdownTables: string[] = [];
         $("table").each((_, table) => {
           const $table = $(table);
           const rows: string[] = [];
@@ -206,7 +207,6 @@ export class CtyunDocsMCP extends McpAgent<Env, unknown> {
             const cells: string[] = [];
             $(tr).find("th, td").each((_, cell) => {
               let text = $(cell).text().trim().replace(/\s+/g, " ");
-              // 处理单元格中的换行
               text = text.replace(/\n/g, " ");
               cells.push(text);
             });
@@ -215,29 +215,34 @@ export class CtyunDocsMCP extends McpAgent<Env, unknown> {
             }
           });
 
-          // 添加分隔行
           if (rows.length > 1) {
             const headerCells = rows[0].split("|").filter((_, i, arr) => i > 0 && i < arr.length - 1);
             const separator = "| " + headerCells.map(() => "---").join(" | ") + " |";
             rows.splice(1, 0, separator);
           }
 
-          $table.after("\n" + rows.join("\n") + "\n");
+          const markdownTable = rows.join("\n");
+          markdownTables.push(markdownTable);
           $table.remove();
         });
 
-        // 清理空行和多余空白
+        // 清理 HTML 并转换为纯文本
         let text = $("body").html() || "";
         // 移除空标签
         text = text.replace(/<(\w+)[^>]*>\s*<\/\1>/g, "");
-        // 将剩余 HTML 标签替换为换行
-        text = text.replace(/<\/?(p|div|br|h[1-6]|li|tr|td|th|blockquote|pre|section)[^>]*>/gi, "\n");
-        // 移除其他标签但保留内容
+        // 将块级标签替换为换行
+        text = text.replace(/<\/?(p|div|h[1-6]|li|blockquote|pre|section)[^>]*>/gi, "\n");
+        // 移除剩余标签但保留内容
         text = text.replace(/<[^>]+>/g, "");
-        // 清理多余空白
-        text = text.replace(/[ \t]+/g, " ");
-        text = text.replace(/\n\s*\n/g, "\n\n");
+        // 清理多余空白（但保护 Markdown 表格）
+        text = text.replace(/(?<!\n)\n(?!\n)/g, " ");
+        text = text.replace(/\n{3,}/g, "\n\n");
         text = text.trim();
+
+        // 恢复 Markdown 表格（在文本末尾追加）
+        if (markdownTables.length > 0) {
+          text += "\n\n" + markdownTables.join("\n\n");
+        }
 
         return {
           content: [
