@@ -1,7 +1,10 @@
 // functions/mcp.ts
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { McpAgent } from "agents/mcp";
+import { z } from "zod";
 import { CtyunApi } from "../src/api";
+
+interface Env {}
 
 class CtyunDocsMCP extends McpAgent<Env, unknown> {
   server = new McpServer(
@@ -29,7 +32,7 @@ class CtyunDocsMCP extends McpAgent<Env, unknown> {
       "list_products",
       {
         description: "获取天翼云所有产品文档的分类列表，返回产品名称和对应的 bookId",
-        inputSchema: { type: "object", properties: {}, required: [] },
+        inputSchema: z.object({}).strict(),
         annotations: { readOnlyHint: true },
       },
       async () => {
@@ -50,16 +53,9 @@ class CtyunDocsMCP extends McpAgent<Env, unknown> {
       {
         description:
           "获取指定产品的文档目录树。参数 bookId 来自 list_products 返回的 bookId。返回文档页面的标题和 pageId 列表",
-        inputSchema: {
-          type: "object",
-          properties: {
-            bookId: {
-              type: "string",
-              description: "产品文档 ID，如 '10027004'（天翼云电脑）",
-            },
-          },
-          required: ["bookId"],
-        },
+        inputSchema: z.object({
+          bookId: z.string().describe("产品文档 ID，如 '10027004'（天翼云电脑）"),
+        }).strict(),
         annotations: { readOnlyHint: true },
       },
       async ({ bookId }: { bookId: string }) => {
@@ -80,20 +76,10 @@ class CtyunDocsMCP extends McpAgent<Env, unknown> {
       {
         description:
           "在指定产品的文档中按关键词搜索，返回匹配的页面列表。参数 bookId 来自 list_products，keyword 为用户关心的关键词",
-        inputSchema: {
-          type: "object",
-          properties: {
-            bookId: {
-              type: "string",
-              description: "产品文档 ID",
-            },
-            keyword: {
-              type: "string",
-              description: "搜索关键词，如 '登录', '备份', '计费'",
-            },
-          },
-          required: ["bookId", "keyword"],
-        },
+        inputSchema: z.object({
+          bookId: z.string().describe("产品文档 ID"),
+          keyword: z.string().describe("搜索关键词，如 '登录', '备份', '计费'"),
+        }).strict(),
         annotations: { readOnlyHint: true },
       },
       async ({
@@ -120,16 +106,9 @@ class CtyunDocsMCP extends McpAgent<Env, unknown> {
       {
         description:
           "获取文档页面的元信息，包括标题和 contentPath（文档正文地址）。参数 pageId 来自 get_document_toc 或 search_documents 返回的 pageId",
-        inputSchema: {
-          type: "object",
-          properties: {
-            pageId: {
-              type: "string",
-              description: "文档页面 ID",
-            },
-          },
-          required: ["pageId"],
-        },
+        inputSchema: z.object({
+          pageId: z.string().describe("文档页面 ID"),
+        }).strict(),
         annotations: { readOnlyHint: true },
       },
       async ({ pageId }: { pageId: string }) => {
@@ -150,16 +129,9 @@ class CtyunDocsMCP extends McpAgent<Env, unknown> {
       {
         description:
           "获取文档页面的完整 Markdown 正文。参数 contentPath 来自 get_page_metadata 返回的 contentPath 字段",
-        inputSchema: {
-          type: "object",
-          properties: {
-            contentPath: {
-              type: "string",
-              description: "文档正文 URL，来自 get_page_metadata 返回的 contentPath",
-            },
-          },
-          required: ["contentPath"],
-        },
+        inputSchema: z.object({
+          contentPath: z.string().describe("文档正文 URL，来自 get_page_metadata 返回的 contentPath"),
+        }).strict(),
         annotations: { readOnlyHint: true },
       },
       async ({ contentPath }: { contentPath: string }) => {
