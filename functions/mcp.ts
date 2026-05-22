@@ -1,7 +1,6 @@
 // functions/mcp.ts
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { McpAgent } from "agents/mcp";
-import { z } from "zod";
 import { CtyunApi } from "../src/api";
 
 class CtyunDocsMCP extends McpAgent<Env, unknown> {
