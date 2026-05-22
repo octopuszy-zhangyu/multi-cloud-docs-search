@@ -58,7 +58,7 @@ export class CtyunDocsMCP extends McpAgent<Env, unknown> {
       "list_products",
       {
         description: "获取天翼云所有产品文档的分类列表，返回产品名称和对应的 bookId",
-        inputSchema: z.object({}).strict(),
+        inputSchema: z.any().optional(),
         annotations: { readOnlyHint: true },
       },
       async () => {
