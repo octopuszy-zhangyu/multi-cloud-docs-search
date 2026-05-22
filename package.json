@@ -5,8 +5,8 @@
   "main": "src/index.ts",
   "scripts": {
     "dev": "wrangler pages dev",
-    "build": "wrangler pages functions build",
-    "deploy": "wrangler pages deploy"
+    "build": "echo 'No build needed for Pages Functions'",
+    "deploy": "echo 'No deploy needed - Cloudflare Pages auto-deploys from Git'"
   },
   "dependencies": {
     "@modelcontextprotocol/sdk": "^1.18.0",
