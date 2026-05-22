@@ -197,6 +197,32 @@ export class CtyunDocsMCP extends McpAgent<Env, unknown> {
         // 移除不需要的标签
         $("script, style, img, nav, footer, header, aside, .ad, .advertisement").remove();
 
+        // 将标题转换为 Markdown 格式
+        $("h1").each((_, el) => $(el).replaceWith("\n# " + $(el).text().trim() + "\n"));
+        $("h2").each((_, el) => $(el).replaceWith("\n## " + $(el).text().trim() + "\n"));
+        $("h3").each((_, el) => $(el).replaceWith("\n### " + $(el).text().trim() + "\n"));
+        $("h4").each((_, el) => $(el).replaceWith("\n#### " + $(el).text().trim() + "\n"));
+        $("h5").each((_, el) => $(el).replaceWith("\n##### " + $(el).text().trim() + "\n"));
+        $("h6").each((_, el) => $(el).replaceWith("\n###### " + $(el).text().trim() + "\n"));
+
+        // 将列表转换为 Markdown 格式
+        $("ul").each((_, el) => {
+          const items: string[] = [];
+          $(el).find("li").each((_, li) => {
+            items.push("- " + $(li).text().trim().replace(/\s+/g, " "));
+          });
+          $(el).replaceWith("\n" + items.join("\n") + "\n");
+        });
+        $("ol").each((_, el) => {
+          const items: string[] = [];
+          let idx = 1;
+          $(el).find("li").each((_, li) => {
+            items.push(idx + ". " + $(li).text().trim().replace(/\s+/g, " "));
+            idx++;
+          });
+          $(el).replaceWith("\n" + items.join("\n") + "\n");
+        });
+
         // 将表格转换为 Markdown 格式，并保存到占位符
         const markdownTables: string[] = [];
         $("table").each((_, table) => {
@@ -231,11 +257,11 @@ export class CtyunDocsMCP extends McpAgent<Env, unknown> {
         // 移除空标签
         text = text.replace(/<(\w+)[^>]*>\s*<\/\1>/g, "");
         // 将块级标签替换为换行
-        text = text.replace(/<\/?(p|div|h[1-6]|li|blockquote|pre|section)[^>]*>/gi, "\n");
+        text = text.replace(/<\/?(p|div|br|blockquote|pre|section)[^>]*>/gi, "\n");
         // 移除剩余标签但保留内容
         text = text.replace(/<[^>]+>/g, "");
-        // 清理多余空白（但保护 Markdown 表格）
-        text = text.replace(/(?<!\n)\n(?!\n)/g, " ");
+        // 清理多余空白
+        text = text.replace(/[ \t]+/g, " ");
         text = text.replace(/\n{3,}/g, "\n\n");
         text = text.trim();
 
