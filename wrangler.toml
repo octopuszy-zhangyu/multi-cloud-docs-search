@@ -1,5 +1,4 @@
 name = "ctyun-docs-search"
-pages_build_output_dir = ".vercel/output/static"
 
 compatibility_date = "2025-03-10"
 
