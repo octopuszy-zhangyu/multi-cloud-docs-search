@@ -1,0 +1,17 @@
+name = "ctyun-docs-search"
+pages_build_output_dir = ".vercel/output/static"
+
+[compatibility_date]
+compatibility_date = "2025-03-10"
+
+[compatibility_flags]
+compatibility_flags = ["nodejs_compat"]
+
+[durable_objects]
+bindings = [
+  { class_name = "CtyunDocsMCP", name = "MCP_OBJECT" }
+]
+
+[[migrations]]
+tag = "v1"
+new_sqlite_classes = ["CtyunDocsMCP"]

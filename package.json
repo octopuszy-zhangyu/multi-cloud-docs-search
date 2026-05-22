@@ -1,0 +1,22 @@
+{
+  "name": "ctyun-docs-search",
+  "version": "1.0.0",
+  "description": "MCP Server for 天翼云(CTYUN) documentation search",
+  "main": "src/index.ts",
+  "scripts": {
+    "dev": "wrangler pages dev",
+    "build": "wrangler pages functions build",
+    "deploy": "wrangler pages deploy"
+  },
+  "dependencies": {
+    "@modelcontextprotocol/sdk": "^1.18.0",
+    "agents": "^0.13.2",
+    "zod": "^4.0.0",
+    "cheerio": "^1.0.0"
+  },
+  "devDependencies": {
+    "@cloudflare/workers-types": "^4.20250301.0",
+    "typescript": "^5.7.0",
+    "wrangler": "^4.0.0"
+  }
+}
