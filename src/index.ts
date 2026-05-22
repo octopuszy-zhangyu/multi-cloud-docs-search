@@ -194,8 +194,8 @@ export class CtyunDocsMCP extends McpAgent<Env, unknown> {
         const html = await this.api.getPageContent(contentPath);
         const $ = cheerio.load(html);
 
-        // 移除不需要的标签
-        $("script, style, img, nav, footer, header, aside, .ad, .advertisement").remove();
+        // 移除不需要的标签（保留 img 用于 Markdown 图片链接）
+        $("script, style, nav, footer, header, aside, .ad, .advertisement").remove();
 
         // 将标题转换为 Markdown 格式
         $("h1").each((_, el) => $(el).replaceWith("\n# " + $(el).text().trim() + "\n"));
@@ -221,6 +221,15 @@ export class CtyunDocsMCP extends McpAgent<Env, unknown> {
             idx++;
           });
           $(el).replaceWith("\n" + items.join("\n") + "\n");
+        });
+
+        // 将图片转换为 Markdown 格式
+        $("img").each((_, el) => {
+          const src = $(el).attr("src") || $(el).attr("data-src") || "";
+          const alt = $(el).attr("alt") || "";
+          if (src) {
+            $(el).replaceWith("![" + alt + "](" + src + ")");
+          }
         });
 
         // 将表格转换为 Markdown 格式，并保存到占位符
