@@ -1,11 +1,9 @@
 name = "ctyun-docs-search"
+main = "src/index.ts"
 
 compatibility_date = "2025-03-10"
 
 compatibility_flags = ["nodejs_compat"]
-
-[pages]
-build_output_dir = "static"
 
 [durable_objects]
 bindings = [

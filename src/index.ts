@@ -1,10 +1,19 @@
-// functions/mcp.ts
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { McpAgent } from "agents/mcp";
 import { z } from "zod";
-import { CtyunApi } from "../src/api";
+import { CtyunApi } from "./api";
 
 interface Env {}
+
+export default {
+  async fetch(request: Request, env: Env, ctx: ExecutionContext): Promise<Response> {
+    const url = new URL(request.url);
+    if (url.pathname === "/mcp") {
+      return CtyunDocsMCP.serve("/mcp").fetch(request, env, ctx);
+    }
+    return new Response("Not found", { status: 404 });
+  },
+};
 
 class CtyunDocsMCP extends McpAgent<Env, unknown> {
   server = new McpServer(
@@ -148,5 +157,3 @@ class CtyunDocsMCP extends McpAgent<Env, unknown> {
     );
   }
 }
-
-export const onRequest = CtyunDocsMCP.serve("/mcp").fetch;

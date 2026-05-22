@@ -4,9 +4,9 @@
   "description": "MCP Server for 天翼云(CTYUN) documentation search",
   "main": "src/index.ts",
   "scripts": {
-    "dev": "wrangler pages dev",
-    "build": "echo 'No build needed for Pages Functions'",
-    "deploy": "echo 'No deploy needed - Cloudflare Pages auto-deploys from Git'"
+    "dev": "wrangler dev",
+    "build": "echo 'No build needed for Workers'",
+    "deploy": "wrangler deploy"
   },
   "dependencies": {
     "@modelcontextprotocol/sdk": "^1.18.0",
