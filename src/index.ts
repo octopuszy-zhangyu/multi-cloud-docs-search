@@ -25,13 +25,29 @@ export class CtyunDocsMCP extends McpAgent<Env, unknown> {
     {
       instructions: `天翼云文档搜索 MCP Server。
 
-工作流程：
+## 工作流程
 1. 先调用 list_products 获取所有产品列表，匹配用户关心的产品获取 bookId
 2. 调用 get_document_toc 获取产品文档目录，或 search_documents 按关键词搜索
 3. 调用 get_page_metadata 获取页面元信息和 contentPath
 4. 调用 get_page_content 获取文档 Markdown 正文
 
-常用产品 bookId：天翼云电脑（政企版）= 10027004，弹性云主机 ECS = 10026730`,
+## 常用产品 bookId
+- 天翼云电脑（政企版）：10027004
+- 弹性云主机 ECS：10026730
+
+## 工具参数规范（必须严格遵守）
+| 工具 | 参数 | 说明 |
+|------|------|------|
+| list_products | 无参数 | 调用时传空对象 {} |
+| get_document_toc | bookId: string | 产品文档 ID，如 "10027004" |
+| search_documents | bookId: string, keyword: string | bookId 为产品 ID，keyword 为搜索词 |
+| get_page_metadata | pageId: string | 文档页面 ID，如 "10028086" |
+| get_page_content | contentPath: string | 文档正文 URL，来自 get_page_metadata 返回的 contentPath 字段 |
+
+## 常见错误
+- get_page_content 不需要 bookId 或 pageId，只需要 contentPath（一个 URL 字符串）
+- get_page_metadata 不需要 bookId，只需要 pageId
+- 所有参数都是字符串类型`,
     }
   );
 
