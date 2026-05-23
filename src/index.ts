@@ -63,11 +63,13 @@ export class CtyunDocsMCP extends McpAgent<Env, unknown> {
       },
       async () => {
         const raw = await this.api.listProducts();
+        // 清理字符串中的 HTML 标签和特殊字符
+        const clean = (str: string) => str?.replace(/<[^>]+>/g, "").replace(/[\n\r\t]/g, " ").replace(/\\/g, "").trim() || "";
         const categories = raw.data?.list?.map((cat) => ({
-          categoryName: cat.bookClassName,
+          categoryName: clean(cat.bookClassName),
           products: cat.list.map((p) => ({
             bookId: p.bookId,
-            name: p.bookName,
+            name: clean(p.bookName),
           })),
         }));
         return {
