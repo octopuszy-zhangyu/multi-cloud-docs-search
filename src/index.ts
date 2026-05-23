@@ -68,7 +68,6 @@ export class CtyunDocsMCP extends McpAgent<Env, unknown> {
           products: cat.list.map((p) => ({
             bookId: p.bookId,
             name: p.bookName,
-            description: p.note,
           })),
         }));
         return {
