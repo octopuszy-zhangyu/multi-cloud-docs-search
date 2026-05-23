@@ -63,8 +63,21 @@ export class CtyunDocsMCP extends McpAgent<Env, unknown> {
       },
       async () => {
         const raw = await this.api.listProducts();
-        // 清理字符串中的 HTML 标签和特殊字符
-        const clean = (str: string) => str?.replace(/<[^>]+>/g, "").replace(/[\n\r\t]/g, " ").replace(/\\/g, "").trim() || "";
+        // 清理字符串中的 HTML 标签和所有特殊字符
+        const clean = (str: string) => {
+          if (!str) return "";
+          // 先移除所有 HTML 标签
+          let result = str.replace(/<[^>]*>/g, "");
+          // 移除 HTML 实体如 &nbsp; &amp; 等
+          result = result.replace(/&[a-zA-Z]+;/g, " ");
+          // 移除所有换行、回车、制表符
+          result = result.replace(/[\n\r\t]/g, " ");
+          // 移除反斜杠
+          result = result.replace(/\\/g, "");
+          // 移除多余空格
+          result = result.replace(/\s+/g, " ").trim();
+          return result;
+        };
         const categories = raw.data?.list?.map((cat) => ({
           categoryName: clean(cat.bookClassName),
           products: cat.list.map((p) => ({
