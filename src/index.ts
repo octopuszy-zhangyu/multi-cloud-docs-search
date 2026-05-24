@@ -85,11 +85,17 @@ export class CtyunDocsMCP extends McpAgent<Env, unknown> {
             name: clean(p.bookName),
           })),
         }));
+        const text = categories
+          .map((cat) =>
+            `${cat.categoryName}:\n` +
+            cat.products.map((p) => `  - ${p.name} (${p.bookId})`).join("\n")
+          )
+          .join("\n\n");
         return {
           content: [
             {
               type: "text",
-              text: JSON.stringify(categories),
+              text,
             },
           ],
         };
