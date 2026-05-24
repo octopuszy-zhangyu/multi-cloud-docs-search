@@ -89,7 +89,7 @@ export class CtyunDocsMCP extends McpAgent<Env, unknown> {
           content: [
             {
               type: "text",
-              text: JSON.stringify(categories),
+              text: JSON.stringify(categories, null, 2),
             },
           ],
         };
