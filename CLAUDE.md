@@ -60,3 +60,35 @@ npm run build    # 构建
 - 所有工具为只读操作
 - 天翼云 API 无需认证
 - 详细 API 规范见 `skills/ctyun-docs-search/SKILL.md`
+
+## 部署与验证
+
+### 部署流程
+1. 代码 push 到 GitHub 后，Cloudflare Pages 会自动构建部署
+2. 等待约 1-2 分钟部署完成
+
+### 验证方法
+部署后使用 MCP 工具测试所有 5 个核心功能：
+
+```bash
+# 1. 测试获取产品列表
+list_products({ provider: "ctyun" })
+
+# 2. 测试获取文档目录
+get_document_toc({ provider: "ctyun", productId: "10027004" })
+
+# 3. 测试搜索文档
+search_documents({ provider: "ctyun", productId: "10027004", keyword: "登录" })
+
+# 4. 测试获取页面元信息
+get_page_metadata({ provider: "ctyun", pageId: "10028086" })
+
+# 5. 测试获取页面正文
+get_page_content({ provider: "ctyun", contentPath: "从 get_page_metadata 获取的 contentPath" })
+```
+
+### 验证原则
+- 每次代码变更后必须执行完整测试流程
+- 所有 5 个工具都必须返回正确结果
+- 检查返回数据格式是否符合预期
+- 确保新增云厂商适配器后测试覆盖所有工具
