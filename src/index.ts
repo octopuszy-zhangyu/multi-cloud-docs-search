@@ -212,12 +212,12 @@ export class CtyunDocsMCP extends McpAgent<Env, unknown> {
         $("script, style, nav, footer, header, aside, .ad, .advertisement").remove();
 
         // 将标题转换为 Markdown 格式
-        $("h1").each((_, el) => $(el).replaceWith("\n# " + $(el).text().trim() + "\n"));
-        $("h2").each((_, el) => $(el).replaceWith("\n## " + $(el).text().trim() + "\n"));
-        $("h3").each((_, el) => $(el).replaceWith("\n### " + $(el).text().trim() + "\n"));
-        $("h4").each((_, el) => $(el).replaceWith("\n#### " + $(el).text().trim() + "\n"));
-        $("h5").each((_, el) => $(el).replaceWith("\n##### " + $(el).text().trim() + "\n"));
-        $("h6").each((_, el) => $(el).replaceWith("\n###### " + $(el).text().trim() + "\n"));
+        $("h1").each((_, el) => { $(el).replaceWith("\n# " + $(el).text().trim() + "\n"); });
+        $("h2").each((_, el) => { $(el).replaceWith("\n## " + $(el).text().trim() + "\n"); });
+        $("h3").each((_, el) => { $(el).replaceWith("\n### " + $(el).text().trim() + "\n"); });
+        $("h4").each((_, el) => { $(el).replaceWith("\n#### " + $(el).text().trim() + "\n"); });
+        $("h5").each((_, el) => { $(el).replaceWith("\n##### " + $(el).text().trim() + "\n"); });
+        $("h6").each((_, el) => { $(el).replaceWith("\n###### " + $(el).text().trim() + "\n"); });
 
         // 将列表转换为 Markdown 格式
         $("ul").each((_, el) => {
