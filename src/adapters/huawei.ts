@@ -143,6 +143,12 @@ export class HuaweiAdapter extends CloudDocAdapter {
 
   async getPageContent(contentPath: string): Promise<string> {
     const html = await this.fetchHtml(contentPath);
+    const $ = cheerio.load(html);
+    // 只提取 help-content help-center-document 区域的内容，去除页头页脚等无关信息
+    const content = $(".help-content.help-center-document").first();
+    if (content.length > 0) {
+      return htmlToMarkdown(content.html() || "");
+    }
     return htmlToMarkdown(html);
   }
 }
