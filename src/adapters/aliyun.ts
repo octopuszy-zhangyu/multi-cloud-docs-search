@@ -90,8 +90,17 @@ export class AliyunAdapter extends CloudDocAdapter {
   }
 
   async searchDocuments(productId: string, keyword: string): Promise<SearchResult[]> {
-    // TODO: 实现搜索文档
-    return [];
+    // 阿里云没有公开的搜索 API，通过遍历文档目录做本地关键词匹配
+    const toc = await this.getDocumentToc(productId);
+    const lowerKeyword = keyword.toLowerCase();
+
+    return toc
+      .filter((item) => item.title.toLowerCase().includes(lowerKeyword))
+      .map((item) => ({
+        pageId: item.pageId,
+        title: item.title,
+        description: undefined,
+      }));
   }
 
   async getPageMetadata(pageId: string): Promise<PageMetadata> {
