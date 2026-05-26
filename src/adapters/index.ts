@@ -4,6 +4,7 @@ import { AliyunAdapter } from "./aliyun";
 import { VolcengineAdapter } from "./volcengine";
 import { TencentAdapter } from "./tencent";
 import { HuaweiAdapter } from "./huawei";
+import { EcloudAdapter } from "./ecloud";
 
 const adapters: Record<string, CloudDocAdapter> = {
   ctyun: new CtyunAdapter(),
@@ -11,6 +12,7 @@ const adapters: Record<string, CloudDocAdapter> = {
   volcengine: new VolcengineAdapter(),
   tencent: new TencentAdapter(),
   huawei: new HuaweiAdapter(),
+  ecloud: new EcloudAdapter(),
 };
 
 /** 获取指定云厂商的适配器实例 */
