@@ -80,44 +80,12 @@ export class TencentAdapter extends CloudDocAdapter {
     const items: TocItem[] = [];
     const seen = new Set<string>();
 
-    // 方法1: 从侧边栏目录提取 (data-node 属性)
-    $(".rno-column-aside-menu[data-node]").each((_, el) => {
-      const dataNode = $(el).attr("data-node");
-      const dataLink = $(el).attr("data-link");
-      const title = $(el).attr("title") || $(el).find("h4").text().trim();
-      const href = $(el).attr("href") || dataLink || "";
-
-      if (dataNode && title && !seen.has(dataNode)) {
-        seen.add(dataNode);
-        items.push({
-          pageId: `${productId}/${dataNode}`,
-          title,
-        });
-      }
-    });
-
-    // 方法2: 从侧边栏提取所有链接
-    $(".rno-column-aside-bd-2 a, .doc-aside-wrap a, .rno-column-aside-menu-wrap a").each((_, el) => {
+    // 提取页面中所有文档链接
+    // 支持相对路径 /document/product/213/495 和绝对路径 https://cloud.tencent.com/document/product/213/495
+    $("a[href*='/document/product/" + productId + "/']").each((_, el) => {
       const href = $(el).attr("href") || "";
-      const match = href.match(/^\/document\/product\/\d+\/(\d+)/);
-      if (match) {
-        const pageId = match[1];
-        const title = $(el).text().trim() || $(el).attr("title") || "";
-
-        if (pageId && title && !seen.has(pageId)) {
-          seen.add(pageId);
-          items.push({
-            pageId: `${productId}/${pageId}`,
-            title,
-          });
-        }
-      }
-    });
-
-    // 方法3: 从页面内容中提取文档链接
-    $("a[href^='/document/product/" + productId + "/']").each((_, el) => {
-      const href = $(el).attr("href") || "";
-      const match = href.match(/^\/document\/product\/\d+\/(\d+)/);
+      // 匹配 /document/product/213/495 或 https://cloud.tencent.com/document/product/213/495
+      const match = href.match(/(?:\/document\/product\/\d+\/(\d+))/);
       if (match) {
         const pageId = match[1];
         const title = $(el).text().trim();
