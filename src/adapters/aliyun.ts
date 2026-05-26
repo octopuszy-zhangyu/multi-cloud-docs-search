@@ -104,8 +104,21 @@ export class AliyunAdapter extends CloudDocAdapter {
   }
 
   async getPageMetadata(pageId: string): Promise<PageMetadata> {
-    // TODO: 实现获取页面元信息
-    throw new Error("Not implemented");
+    // pageId 是文档路径，如 /zh/ecs/user-guide/after-the-security-group
+    const url = `${BASE_URL}${pageId}`;
+    const html = await this.fetchHtml(url);
+    const $ = cheerio.load(html);
+
+    const title = $("title").text().trim() || $("h1").first().text().trim() || "";
+    const description = $('meta[name="description"]').attr("content") || "";
+    const contentPath = url;
+
+    return {
+      pageId,
+      title,
+      note: description,
+      contentPath,
+    };
   }
 
   async getPageContent(contentPath: string): Promise<string> {
