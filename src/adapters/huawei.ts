@@ -117,13 +117,13 @@ export class HuaweiAdapter extends CloudDocAdapter {
   }
 
   async getPageMetadata(pageId: string): Promise<PageMetadata> {
-    // pageId 格式: productId/docId (如 ecs/productdesc-ecs/ecs_01_0073)
-    // 需要转换为 URL: https://support.huaweicloud.com/productdesc-ecs/ecs_01_0073.html
+    // pageId 格式: productId/docPath (如 ecs/productdesc-ecs/ecs_01_0073)
+    // URL: https://support.huaweicloud.com/productdesc-ecs/ecs_01_0073.html
     const parts = pageId.split("/");
     const productId = parts[0];
     const docPath = parts.slice(1).join("/");
 
-    const url = `${BASE_URL}/${productId}/${docPath}.html`;
+    const url = `${BASE_URL}/${docPath}.html`;
     const html = await this.fetchHtml(url);
     const $ = cheerio.load(html);
 
