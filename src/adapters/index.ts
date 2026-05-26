@@ -1,8 +1,10 @@
 import { CloudDocAdapter } from "./base";
 import { CtyunAdapter } from "./ctyun";
+import { AliyunAdapter } from "./aliyun";
 
 const adapters: Record<string, CloudDocAdapter> = {
   ctyun: new CtyunAdapter(),
+  aliyun: new AliyunAdapter(),
 };
 
 /** 获取指定云厂商的适配器实例 */
