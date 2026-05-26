@@ -22,7 +22,8 @@ src/
 │   ├── ctyun.ts              # 天翼云适配器
 │   ├── aliyun.ts             # 阿里云适配器
 │   ├── volcengine.ts         # 火山引擎适配器
-│   └── tencent.ts            # 腾讯云适配器
+│   ├── tencent.ts            # 腾讯云适配器
+│   └── huawei.ts            # 华为云适配器
 └── utils/
     └── html-to-md.ts         # HTML 转 Markdown 工具
 ```
@@ -45,6 +46,7 @@ src/
 | aliyun | 阿里云 | 已实现 |
 | volcengine | 火山引擎 | 已实现 |
 | tencent | 腾讯云 | 已实现 |
+| huawei | 华为云 | 已实现 |
 
 ## 常用命令
 
@@ -63,6 +65,8 @@ npm run build    # 构建
 | 云服务器 ECS | 6396 |
 | 云服务器 CVM（腾讯云） | 213 |
 | 大模型服务平台 TokenHub（腾讯云） | 1823 |
+| 弹性云服务器 ECS（华为云） | ecs |
+| 对象存储服务 OBS（华为云） | obs |
 
 ## 注意事项
 
@@ -73,6 +77,8 @@ npm run build    # 构建
 - 火山引擎 API 无需认证，文档内容直接返回 Markdown（`MDContent` 字段）
 - 腾讯云文档为 SSR 渲染，内容需从 HTML 转换为 Markdown
 - 腾讯云产品 ID 为数字（如 213=云服务器 CVM），页面 ID 格式为 `productId/pageId`
+- 华为云通过公开 API 获取产品列表，目录通过 `v3_support_leftmenu_fragment.html` 加载
+- 华为云文档内容需从 HTML 转换为 Markdown，已自动提取正文区域去除页头页脚
 - 详细 API 规范见 `skills/ctyun-docs-search/SKILL.md`
 
 ## 部署与验证
@@ -106,6 +112,13 @@ get_document_toc({ provider: "tencent", productId: "213" })
 search_documents({ provider: "tencent", productId: "213", keyword: "登录" })
 get_page_metadata({ provider: "tencent", pageId: "213/495" })
 get_page_content({ provider: "tencent", contentPath: "https://cloud.tencent.com/document/product/213/495" })
+
+# 华为云验证
+list_products({ provider: "huawei" })
+get_document_toc({ provider: "huawei", productId: "ecs" })
+search_documents({ provider: "huawei", productId: "ecs", keyword: "安全组" })
+get_page_metadata({ provider: "huawei", pageId: "ecs/productdesc-ecs/zh-cn_topic_0013771112" })
+get_page_content({ provider: "huawei", contentPath: "https://support.huaweicloud.com/productdesc-ecs/zh-cn_topic_0013771112.html" })
 ```
 
 ### 验证原则

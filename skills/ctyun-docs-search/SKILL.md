@@ -1,6 +1,6 @@
 ---
 name: ctyun-docs-search
-description: Use when the user asks about cloud provider products, services, documentation, or pricing. Supports 天翼云(CTYUN), 阿里云(Aliyun), 火山引擎(Volcengine), 腾讯云(Tencent Cloud). Searches official cloud provider documentation sites and returns relevant content.
+description: Use when the user asks about cloud provider products, services, documentation, or pricing. Supports 天翼云(CTYUN), 阿里云(Aliyun), 火山引擎(Volcengine), 腾讯云(Tencent Cloud), 华为云(Huawei Cloud). Searches official cloud provider documentation sites and returns relevant content.
 ---
 
 # 多云文档搜索 (Multi-Cloud Docs Search)
@@ -21,6 +21,7 @@ description: Use when the user asks about cloud provider products, services, doc
 | aliyun | 阿里云 | API 返回 JSON 目录树，内容需 HTML 转 Markdown |
 | volcengine | 火山引擎 | API 直接返回 Markdown（`MDContent` 字段） |
 | tencent | 腾讯云 | SSR 渲染，内容需 HTML 转 Markdown |
+| huawei | 华为云 | 公开 API 获取产品列表，HTML 目录，内容需 HTML 转 Markdown |
 
 ## MCP 工具
 
@@ -116,6 +117,7 @@ description: Use when the user asks about cloud provider products, services, doc
 | aliyun | 文档路径 | `/zh/ecs/product-overview/what-is-ecs` |
 | volcengine | `{productId}/{docId}` | `6349/1183370` |
 | tencent | `{productId}/{pageId}` | `213/495` |
+| huawei | `{productId}/{docPath}` | `ecs/productdesc-ecs/zh-cn_topic_0013771112` |
 
 ## 常用产品 productId 映射
 
@@ -131,6 +133,13 @@ description: Use when the user asks about cloud provider products, services, doc
 | 云服务器 CVM | 213 |
 | 大模型服务平台 TokenHub | 1823 |
 | 腾讯混元大模型 | 1729 |
+
+### 华为云
+| 产品名称 | productId |
+|---------|-----------|
+| 弹性云服务器 ECS | ecs |
+| 对象存储服务 OBS | obs |
+| 云容器引擎 CCE | cce |
 
 > 更多产品 productId 通过 `list_products` 获取
 
@@ -164,5 +173,6 @@ description: Use when the user asks about cloud provider products, services, doc
 - 天翼云 API 无需认证
 - 火山引擎 API 无需认证，文档内容直接返回 Markdown
 - 腾讯云文档为 SSR 渲染，内容需从 HTML 转换为 Markdown
+- 华为云通过公开 API 获取产品列表，文档内容已自动提取正文区域去除页头页脚
 - 获取文档正文的推荐方式：`get_page_metadata` → `get_page_content`
 - 本技能已部署到 Cloudflare Workers，GitHub push 后自动部署
