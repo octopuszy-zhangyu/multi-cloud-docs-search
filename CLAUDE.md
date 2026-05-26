@@ -23,7 +23,8 @@ src/
 │   ├── aliyun.ts             # 阿里云适配器
 │   ├── volcengine.ts         # 火山引擎适配器
 │   ├── tencent.ts            # 腾讯云适配器
-│   └── huawei.ts            # 华为云适配器
+│   ├── huawei.ts            # 华为云适配器
+  └── ecloud.ts            # 移动云适配器
 └── utils/
     └── html-to-md.ts         # HTML 转 Markdown 工具
 ```
@@ -47,6 +48,7 @@ src/
 | volcengine | 火山引擎 | 已实现 |
 | tencent | 腾讯云 | 已实现 |
 | huawei | 华为云 | 已实现 |
+| ecloud | 移动云 | 已实现 |
 
 ## 常用命令
 
@@ -67,6 +69,8 @@ npm run build    # 构建
 | 大模型服务平台 TokenHub（腾讯云） | 1823 |
 | 弹性云服务器 ECS（华为云） | ecs |
 | 对象存储服务 OBS（华为云） | obs |
+| 云主机 ECS（移动云） | 706 |
+| 对象存储 EOS（移动云） | 729 |
 
 ## 注意事项
 
@@ -79,6 +83,10 @@ npm run build    # 构建
 - 腾讯云产品 ID 为数字（如 213=云服务器 CVM），页面 ID 格式为 `productId/pageId`
 - 华为云通过公开 API 获取产品列表，目录通过 `v3_support_leftmenu_fragment.html` 加载
 - 华为云文档内容需从 HTML 转换为 Markdown，已自动提取正文区域去除页头页脚
+- 移动云通过 API 获取产品列表（`/category/tree`）和文档目录（`/outline/tree`）
+- 移动云文档内容通过 API 获取（`/article/info` → `/article/content`），返回 HTML 格式
+- 移动云首页为 SSR 渲染，HTML 内容为空，无法通过 HTML 解析获取产品列表
+- 移动云 API 可能屏蔽 Cloudflare Workers IP，本地 stdio 模式可正常使用
 - 详细 API 规范见 `skills/ctyun-docs-search/SKILL.md`
 
 ## 部署与验证

@@ -1,6 +1,6 @@
 ---
 name: ctyun-docs-search
-description: Use when the user asks about cloud provider products, services, documentation, or pricing. Supports 天翼云(CTYUN), 阿里云(Aliyun), 火山引擎(Volcengine), 腾讯云(Tencent Cloud), 华为云(Huawei Cloud). Searches official cloud provider documentation sites and returns relevant content.
+description: Use when the user asks about cloud provider products, services, documentation, or pricing. Supports 天翼云(CTYUN), 阿里云(Aliyun), 火山引擎(Volcengine), 腾讯云(Tencent Cloud), 华为云(Huawei Cloud), 移动云(Ecloud). Searches official cloud provider documentation sites and returns relevant content.
 ---
 
 # 多云文档搜索 (Multi-Cloud Docs Search)
@@ -22,6 +22,7 @@ description: Use when the user asks about cloud provider products, services, doc
 | volcengine | 火山引擎 | API 直接返回 Markdown（`MDContent` 字段） |
 | tencent | 腾讯云 | SSR 渲染，内容需 HTML 转 Markdown |
 | huawei | 华为云 | 公开 API 获取产品列表，HTML 目录，内容需 HTML 转 Markdown |
+| ecloud | 移动云 | API 获取产品列表和文档目录，内容通过 API 返回 HTML |
 
 ## MCP 工具
 
@@ -118,6 +119,7 @@ description: Use when the user asks about cloud provider products, services, doc
 | volcengine | `{productId}/{docId}` | `6349/1183370` |
 | tencent | `{productId}/{pageId}` | `213/495` |
 | huawei | `{productId}/{docPath}` | `ecs/productdesc-ecs/zh-cn_topic_0013771112` |
+| ecloud | 纯数字 ID | `23663` |
 
 ## 常用产品 productId 映射
 
@@ -140,6 +142,13 @@ description: Use when the user asks about cloud provider products, services, doc
 | 弹性云服务器 ECS | ecs |
 | 对象存储服务 OBS | obs |
 | 云容器引擎 CCE | cce |
+
+### 移动云
+| 产品名称 | productId |
+|---------|-----------|
+| 云主机 ECS | 706 |
+| 对象存储 EOS | 729 |
+| 虚拟私有云 | 737 |
 
 > 更多产品 productId 通过 `list_products` 获取
 
@@ -174,5 +183,8 @@ description: Use when the user asks about cloud provider products, services, doc
 - 火山引擎 API 无需认证，文档内容直接返回 Markdown
 - 腾讯云文档为 SSR 渲染，内容需从 HTML 转换为 Markdown
 - 华为云通过公开 API 获取产品列表，文档内容已自动提取正文区域去除页头页脚
+- 移动云通过 API 获取产品列表和文档目录，文档内容通过 API 返回 HTML 格式
+- 移动云首页为 SSR 渲染，HTML 内容为空，无法通过 HTML 解析获取产品列表
+- 移动云 API 可能屏蔽 Cloudflare Workers IP，本地 stdio 模式可正常使用
 - 获取文档正文的推荐方式：`get_page_metadata` → `get_page_content`
 - 本技能已部署到 Cloudflare Workers，GitHub push 后自动部署
