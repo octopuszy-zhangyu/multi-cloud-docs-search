@@ -1,5 +1,6 @@
 import * as cheerio from "cheerio";
 import { CloudDocAdapter, type Product, type TocItem, type SearchResult, type PageMetadata } from "./base";
+import { htmlToMarkdown } from "../utils/html-to-md";
 
 const BASE_URL = "https://help.aliyun.com";
 
@@ -122,7 +123,7 @@ export class AliyunAdapter extends CloudDocAdapter {
   }
 
   async getPageContent(contentPath: string): Promise<string> {
-    // TODO: 实现获取页面正文
-    throw new Error("Not implemented");
+    const html = await this.fetchHtml(contentPath);
+    return htmlToMarkdown(html);
   }
 }
