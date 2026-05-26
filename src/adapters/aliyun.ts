@@ -34,9 +34,11 @@ export class AliyunAdapter extends CloudDocAdapter {
 
   async listProducts(): Promise<Product[]> {
     const url = `${BASE_URL}/help/json/mainMenu.json?website=cn&language=zh`;
-    const data = await this.fetchJson<any>(url);
+    const raw = await this.fetchJson<any>(url);
 
     const products: Product[] = [];
+    const children = raw.data?.children;
+    if (!children) return products;
 
     // 遍历 JSON 树结构，提取 level=4 的产品节点
     const extractProducts = (nodes: any[]) => {
@@ -54,10 +56,7 @@ export class AliyunAdapter extends CloudDocAdapter {
       }
     };
 
-    if (data.children) {
-      extractProducts(data.children);
-    }
-
+    extractProducts(children);
     return products;
   }
 
