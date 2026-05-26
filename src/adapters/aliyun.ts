@@ -65,10 +65,11 @@ export class AliyunAdapter extends CloudDocAdapter {
     const raw = await this.fetchJson<any>(url);
 
     const items: TocItem[] = [];
-    const learningPath = raw.learningPath;
+    const learningPath = raw.data?.learningPath;
     if (!learningPath) return items;
 
-    for (const chapter of learningPath) {
+    const chapters = learningPath.chapters || [];
+    for (const chapter of chapters) {
       const sections = chapter.sections || [];
       for (const section of sections) {
         const sectionItems = section.items || [];
