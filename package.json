@@ -6,7 +6,8 @@
   "scripts": {
     "dev": "wrangler dev",
     "build": "echo 'No build needed for Workers'",
-    "deploy": "wrangler deploy"
+    "deploy": "wrangler deploy",
+    "stdio": "npx tsx src/stdio.ts"
   },
   "dependencies": {
     "@modelcontextprotocol/sdk": "^1.18.0",
