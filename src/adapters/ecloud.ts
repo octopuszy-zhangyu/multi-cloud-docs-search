@@ -90,15 +90,38 @@ export class EcloudAdapter extends CloudDocAdapter {
   }
 
   async listProducts(): Promise<Product[]> {
-    // 移动云API可能屏蔽Cloudflare Workers IP，使用HTML解析作为主要方式
+    // 优先使用API获取产品列表
+    const data = await this.fetchJson<CategoryTreeResponse>(CATEGORY_TREE_API);
+    if (data?.data?.children) {
+      const products: Product[] = [];
+      const seen = new Set<string>();
+
+      const extractProducts = (nodes: CategoryNode[], parentName: string) => {
+        for (const node of nodes) {
+          if (node.children && node.children.length > 0) {
+            extractProducts(node.children, node.name);
+          } else if (node.id && !seen.has(String(node.id))) {
+            seen.add(String(node.id));
+            products.push({
+              productId: String(node.id),
+              name: node.name,
+              description: parentName,
+            });
+          }
+        }
+      };
+
+      extractProducts(data.data.children, "");
+      return products;
+    }
+
+    // 备用方案：从HTML页面提取
     const html = await this.fetchHtml(HELP_CENTER_URL);
     const $ = cheerio.load(html);
 
     const products: Product[] = [];
     const seen = new Set<string>();
 
-    // 从首页提取产品分类链接
-    // 格式: https://ecloud.10086.cn/op-help-center/doc/category/706
     $("a[href*='/doc/category/']").each((_, el) => {
       const href = $(el).attr("href") || "";
       const title = $(el).text().trim();
