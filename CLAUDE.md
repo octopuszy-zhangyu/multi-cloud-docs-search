@@ -21,7 +21,8 @@ src/
 │   ├── base.ts               # 抽象基类 CloudDocAdapter
 │   ├── ctyun.ts              # 天翼云适配器
 │   ├── aliyun.ts             # 阿里云适配器
-│   └── volcengine.ts         # 火山引擎适配器
+│   ├── volcengine.ts         # 火山引擎适配器
+│   └── tencent.ts            # 腾讯云适配器
 └── utils/
     └── html-to-md.ts         # HTML 转 Markdown 工具
 ```
@@ -43,6 +44,7 @@ src/
 | ctyun | 天翼云 | 已实现 |
 | aliyun | 阿里云 | 已实现 |
 | volcengine | 火山引擎 | 已实现 |
+| tencent | 腾讯云 | 已实现 |
 
 ## 常用命令
 
@@ -59,6 +61,8 @@ npm run build    # 构建
 | 弹性云主机 ECS | 10026730 |
 | 对象存储 TOS | 6349 |
 | 云服务器 ECS | 6396 |
+| 云服务器 CVM（腾讯云） | 213 |
+| 大模型服务平台 TokenHub（腾讯云） | 1823 |
 
 ## 注意事项
 
@@ -66,6 +70,8 @@ npm run build    # 构建
 - 所有工具为只读操作
 - 天翼云 API 无需认证
 - 火山引擎 API 无需认证，文档内容直接返回 Markdown（`MDContent` 字段）
+- 腾讯云文档为 SSR 渲染，内容需从 HTML 转换为 Markdown
+- 腾讯云产品 ID 为数字（如 213=云服务器 CVM），页面 ID 格式为 `productId/pageId`
 - 详细 API 规范见 `skills/ctyun-docs-search/SKILL.md`
 
 ## 部署与验证

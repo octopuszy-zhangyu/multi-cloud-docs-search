@@ -1,17 +1,26 @@
 ---
 name: ctyun-docs-search
-description: Use when the user asks about 天翼云(CTYUN) products, services, documentation, or needs help with 天翼云 features. Triggers: mentions of 天翼云, CTYUN, ctyun, 弹性云主机, ECS, 天翼云产品, 天翼云文档. Searches official 天翼云 documentation site for product docs and returns relevant content.
+description: Use when the user asks about cloud provider products, services, documentation, or pricing. Supports 天翼云(CTYUN), 阿里云(Aliyun), 火山引擎(Volcengine), 腾讯云(Tencent Cloud). Searches official cloud provider documentation sites and returns relevant content.
 ---
 
-# 天翼云文档搜索 (CTYUN Docs Search)
+# 多云文档搜索 (Multi-Cloud Docs Search)
 
 ## 概述
 
-搜索天翼云官方文档站，获取产品文档内容。当用户询问天翼云相关产品时，使用本技能自动获取官方文档并回答用户问题。
+搜索多云厂商的官方文档站，获取产品文档内容。当用户询问云产品相关问题时，使用本技能自动获取官方文档并回答用户问题。
 
 ## 架构
 
-本技能使用 MCP (Model Context Protocol) 工具与 Cloudflare Workers 部署的服务通信。所有工具统一接受 `provider` 参数，当前支持 `ctyun`（天翼云）。
+本技能使用 MCP (Model Context Protocol) 工具与 Cloudflare Workers 部署的服务通信。所有工具统一接受 `provider` 参数。
+
+## 当前支持的云厂商
+
+| provider | 名称 | 文档特点 |
+|----------|------|---------|
+| ctyun | 天翼云 | API 返回 JSON，内容需 HTML 转 Markdown |
+| aliyun | 阿里云 | API 返回 JSON 目录树，内容需 HTML 转 Markdown |
+| volcengine | 火山引擎 | API 直接返回 Markdown（`MDContent` 字段） |
+| tencent | 腾讯云 | SSR 渲染，内容需 HTML 转 Markdown |
 
 ## MCP 工具
 
@@ -45,8 +54,7 @@ description: Use when the user asks about 天翼云(CTYUN) products, services, d
 ```json
 [
   { "pageId": "10028050", "title": "产品动态" },
-  { "pageId": "10028042", "title": "产品定义" },
-  { "pageId": "10028086", "title": "登录控制台" }
+  { "pageId": "10028042", "title": "产品定义" }
 ]
 ```
 
@@ -62,7 +70,7 @@ description: Use when the user asks about 天翼云(CTYUN) products, services, d
 **返回**：
 ```json
 [
-  { "pageId": "10028086", "title": "登录控制台", "description": "本节介绍登录天翼云电脑（政企版）控制台的操作指导。" }
+  { "pageId": "10028086", "title": "登录控制台", "description": "..." }
 ]
 ```
 
@@ -81,10 +89,7 @@ description: Use when the user asks about 天翼云(CTYUN) products, services, d
   "pageId": "10028086",
   "title": "登录控制台",
   "note": "本节介绍登录天翼云电脑（政企版）控制台的操作指导。",
-  "contentPath": "https://www.ctyun.cn/v2/portal/s/...",
-  "chapterId": "10028032",
-  "bookId": "10027004",
-  "updateDate": "2025-09-08 17:30:46"
+  "contentPath": "https://www.ctyun.cn/v2/portal/s/..."
 }
 ```
 
@@ -100,55 +105,64 @@ description: Use when the user asks about 天翼云(CTYUN) products, services, d
 **返回**：
 ```markdown
 # 操作场景
-
-登录AI云电脑（政企版）控制台后，才能进行如下业务操作：
-
-- 订购并管理资源包...
-- 创建并管理AI云电脑...
-
-# 通过产品详情页进入
-
-1. 使用管理员帐号登录天翼云门户；
-2. 前往天翼AI云电脑（政企版）产品详情页面；
 ...
 ```
 
+## 各厂商 pageId 格式
+
+| provider | pageId 格式 | 示例 |
+|----------|------------|------|
+| ctyun | 纯数字 ID | `10028086` |
+| aliyun | 文档路径 | `/zh/ecs/product-overview/what-is-ecs` |
+| volcengine | `{productId}/{docId}` | `6349/1183370` |
+| tencent | `{productId}/{pageId}` | `213/495` |
+
 ## 常用产品 productId 映射
 
-| 产品名称 | productId | 分类 |
-|---------|-----------|------|
-| 天翼云电脑（政企版） | 10027004 | 云终端 |
-| 弹性云主机 ECS | 10026730 | 计算 |
+### 天翼云
+| 产品名称 | productId |
+|---------|-----------|
+| 天翼云电脑（政企版） | 10027004 |
+| 弹性云主机 ECS | 10026730 |
+
+### 腾讯云
+| 产品名称 | productId |
+|---------|-----------|
+| 云服务器 CVM | 213 |
+| 大模型服务平台 TokenHub | 1823 |
+| 腾讯混元大模型 | 1729 |
 
 > 更多产品 productId 通过 `list_products` 获取
 
 ## 工作流程
 
 ### 标准流程（推荐）
-1. **获取产品列表**：调用 `list_products({ provider: "ctyun" })`
+1. **获取产品列表**：调用 `list_products({ provider: "xxx" })`
 2. **匹配产品**：从返回结果中找到用户询问的产品，获取 productId
-3. **获取文档目录**：调用 `get_document_toc({ provider: "ctyun", productId: "xxx" })`
-4. **获取页面元信息**：调用 `get_page_metadata({ provider: "ctyun", pageId: "xxx" })` 获取 contentPath
-5. **获取文档正文**：调用 `get_page_content({ provider: "ctyun", contentPath: "xxx" })`
+3. **获取文档目录**：调用 `get_document_toc({ provider: "xxx", productId: "xxx" })`
+4. **获取页面元信息**：调用 `get_page_metadata({ provider: "xxx", pageId: "xxx" })` 获取 contentPath
+5. **获取文档正文**：调用 `get_page_content({ provider: "xxx", contentPath: "xxx" })`
 6. **总结回答**：基于文档内容回答用户问题
 
 ### 搜索流程（当用户询问具体功能时）
 1. **获取产品列表**：调用 `list_products` 获取产品 productId
-2. **搜索关键词**：调用 `search_documents({ provider: "ctyun", productId: "xxx", keyword: "xxx" })` 搜索相关页面
+2. **搜索关键词**：调用 `search_documents({ provider: "xxx", productId: "xxx", keyword: "xxx" })` 搜索相关页面
 3. **获取页面元信息**：调用 `get_page_metadata` 获取 contentPath
 4. **获取文档正文**：调用 `get_page_content` 获取完整 Markdown 内容
 5. **总结回答**：基于文档内容回答用户问题
 
 ### 快速定位
 如果已知产品 productId：
-1. 直接调用 `get_document_toc({ provider: "ctyun", productId: "xxx" })` 获取文档目录
+1. 直接调用 `get_document_toc({ provider: "xxx", productId: "xxx" })` 获取文档目录
 2. 或调用 `search_documents` 搜索关键词
 3. 调用 `get_page_metadata` 获取 contentPath，再调用 `get_page_content` 获取正文
 4. 总结回答
 
 ## 注意事项
 
-- 所有工具第一个参数必须是 `provider: "ctyun"`
-- `productId` 对应原来的 `bookId`
+- 所有工具第一个参数必须是 `provider`，指定云厂商
+- 天翼云 API 无需认证
+- 火山引擎 API 无需认证，文档内容直接返回 Markdown
+- 腾讯云文档为 SSR 渲染，内容需从 HTML 转换为 Markdown
 - 获取文档正文的推荐方式：`get_page_metadata` → `get_page_content`
 - 本技能已部署到 Cloudflare Workers，GitHub push 后自动部署
