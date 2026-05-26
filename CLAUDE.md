@@ -69,6 +69,7 @@ npm run build    # 构建
 - `GetFolderBook` API 已废弃，目录需从 HTML 页面提取
 - 所有工具为只读操作
 - 天翼云 API 无需认证
+- 阿里云 API 返回 JSON 目录树，内容需 HTML 转 Markdown
 - 火山引擎 API 无需认证，文档内容直接返回 Markdown（`MDContent` 字段）
 - 腾讯云文档为 SSR 渲染，内容需从 HTML 转换为 Markdown
 - 腾讯云产品 ID 为数字（如 213=云服务器 CVM），页面 ID 格式为 `productId/pageId`
@@ -98,6 +99,13 @@ get_page_metadata({ provider: "ctyun", pageId: "10028086" })
 
 # 5. 测试获取页面正文
 get_page_content({ provider: "ctyun", contentPath: "从 get_page_metadata 获取的 contentPath" })
+
+# 腾讯云验证
+list_products({ provider: "tencent" })
+get_document_toc({ provider: "tencent", productId: "213" })
+search_documents({ provider: "tencent", productId: "213", keyword: "登录" })
+get_page_metadata({ provider: "tencent", pageId: "213/495" })
+get_page_content({ provider: "tencent", contentPath: "https://cloud.tencent.com/document/product/213/495" })
 ```
 
 ### 验证原则

@@ -33,6 +33,9 @@ export class CtyunDocsMCP extends McpAgent<Env, unknown> {
 
 ## 当前支持的云厂商
 - ctyun - 天翼云
+- aliyun - 阿里云
+- volcengine - 火山引擎
+- tencent - 腾讯云
 
 ## 工具参数规范
 | 工具 | 参数 | 说明 |
@@ -45,7 +48,11 @@ export class CtyunDocsMCP extends McpAgent<Env, unknown> {
 
 ## 常用天翼云产品 productId
 - 天翼云电脑（政企版）：10027004
-- 弹性云主机 ECS：10026730`,
+- 弹性云主机 ECS：10026730
+
+## 常用腾讯云产品 productId
+- 云服务器 CVM：213
+- 大模型服务平台 TokenHub：1823`,
     }
   );
 
