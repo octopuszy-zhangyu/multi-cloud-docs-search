@@ -6,6 +6,8 @@ const BASE_URL = "https://ecloud.10086.cn";
 const HELP_CENTER_URL = `${BASE_URL}/op-help-center`;
 const CATEGORY_TREE_API = `${HELP_CENTER_URL}/request-api/service-api/category/tree`;
 const OUTLINE_TREE_API = `${HELP_CENTER_URL}/request-api/service-api/outline/tree`;
+const ARTICLE_INFO_API = `${HELP_CENTER_URL}/request-api/service-api/article/info`;
+const ARTICLE_CONTENT_API = `${HELP_CENTER_URL}/request-api/service-api/article/content`;
 
 interface CategoryNode {
   id: number;
@@ -30,6 +32,18 @@ interface OutlineNode {
 interface OutlineTreeResponse {
   code: number;
   data: OutlineNode;
+}
+
+interface ArticleInfo {
+  id: number;
+  title: string;
+  gmtModify: number;
+  content: string;
+}
+
+interface ArticleInfoResponse {
+  code: number;
+  data: ArticleInfo;
 }
 
 export class EcloudAdapter extends CloudDocAdapter {
@@ -189,42 +203,74 @@ export class EcloudAdapter extends CloudDocAdapter {
   }
 
   async getPageMetadata(pageId: string): Promise<PageMetadata> {
-    const url = `${HELP_CENTER_URL}/doc/article/${pageId}`;
-    const html = await this.fetchHtml(url);
+    // 使用API获取文章信息
+    const url = `${ARTICLE_INFO_API}/${pageId}`;
+    const data = await this.fetchJson<ArticleInfoResponse>(url);
+
+    if (data.code === 200 && data.data) {
+      const article = data.data;
+      // 转换时间戳
+      const updateDate = new Date(article.gmtModify).toISOString().split('T')[0].replace(/-/g, '/');
+
+      return {
+        pageId,
+        title: article.title,
+        note: `更新时间：${updateDate}`,
+        contentPath: article.content, // 这里存储content hash，供getPageContent使用
+      };
+    }
+
+    // 备用方案：从HTML页面获取
+    const htmlUrl = `${HELP_CENTER_URL}/doc/article/${pageId}`;
+    const html = await this.fetchHtml(htmlUrl);
     const $ = cheerio.load(html);
 
     const title = $("h1").first().text().trim() || $("title").text().trim() || "";
 
-    // 从页面中提取更新时间
-    const updateTime = $("body").text().match(/更新时间[：:]\s*(\d{4}[\/\-]\d{1,2}[\/\-]\d{1,2})/)?.[1] || "";
-
     return {
       pageId,
       title,
-      note: updateTime ? `更新时间：${updateTime}` : "",
-      contentPath: url,
+      note: "",
+      contentPath: htmlUrl,
     };
   }
 
   async getPageContent(contentPath: string): Promise<string> {
-    const html = await this.fetchHtml(contentPath);
-    const $ = cheerio.load(html);
+    // contentPath 可能是：
+    // 1. URL (如 https://ecloud.10086.cn/op-help-center/doc/article/23663)
+    // 2. content hash (如 829b0fa97102f05dc2cf01d58c264e42)
+
+    let contentHtml: string;
+
+    if (contentPath.startsWith("http")) {
+      // 如果是URL，提取articleId
+      const match = contentPath.match(/\/article\/(\d+)/);
+      if (!match) {
+        return htmlToMarkdown(await this.fetchHtml(contentPath));
+      }
+      const articleId = match[1];
+      // 先获取article info
+      const infoUrl = `${ARTICLE_INFO_API}/${articleId}`;
+      const infoData = await this.fetchJson<ArticleInfoResponse>(infoUrl);
+      if (infoData.code === 200 && infoData.data?.content) {
+        contentPath = infoData.data.content;
+      } else {
+        return htmlToMarkdown(await this.fetchHtml(contentPath));
+      }
+    }
+
+    // 获取文档内容（HTML格式）
+    const contentUrl = `${ARTICLE_CONTENT_API}/${contentPath}`;
+    contentHtml = await this.fetchHtml(contentUrl);
 
     // 提取文档正文内容区域
-    // 主要内容在 .main-container 中
-    const content = $(".main-container").first();
-    if (content.length > 0) {
-      // 去除不需要的元素
-      content.find("script, style, .breadcrumb, .top-banner, .cloud-header, .engine-drawer-container, .top-btn, footer").remove();
-      return htmlToMarkdown(content.html() || "");
+    const $ = cheerio.load(contentHtml);
+    const docContent = $("#doc-content-details");
+
+    if (docContent.length > 0) {
+      return htmlToMarkdown(docContent.html() || "");
     }
 
-    // 备用方案：提取 article 或 main 标签
-    const article = $("article").first();
-    if (article.length > 0) {
-      return htmlToMarkdown(article.html() || "");
-    }
-
-    return htmlToMarkdown(html);
+    return htmlToMarkdown(contentHtml);
   }
 }
