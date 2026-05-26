@@ -61,8 +61,31 @@ export class AliyunAdapter extends CloudDocAdapter {
   }
 
   async getDocumentToc(productId: string): Promise<TocItem[]> {
-    // TODO: 实现获取文档目录
-    return [];
+    const url = `${BASE_URL}/help/json/product.json?alias=/${productId}/&website=cn&language=zh`;
+    const raw = await this.fetchJson<any>(url);
+
+    const items: TocItem[] = [];
+    const learningPath = raw.learningPath;
+    if (!learningPath) return items;
+
+    for (const chapter of learningPath) {
+      const sections = chapter.sections || [];
+      for (const section of sections) {
+        const sectionItems = section.items || [];
+        for (const item of sectionItems) {
+          if (item.url) {
+            // 从 URL 中提取路径作为 pageId，如 /zh/ecs/product-overview/what-is-ecs
+            const pageId = item.url.replace(/^https?:\/\/[^\/]+/, "");
+            items.push({
+              pageId,
+              title: item.title,
+            });
+          }
+        }
+      }
+    }
+
+    return items;
   }
 
   async searchDocuments(productId: string, keyword: string): Promise<SearchResult[]> {
