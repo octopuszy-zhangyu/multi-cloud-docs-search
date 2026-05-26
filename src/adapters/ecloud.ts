@@ -73,6 +73,7 @@ export class EcloudAdapter extends CloudDocAdapter {
         "ispreview": "false",
         "tentid": "0",
         "Referer": HELP_CENTER_URL,
+        "Cookie": "CmLocation=100|100; CmProvid=bj",
       },
     });
     if (!res.ok) {
