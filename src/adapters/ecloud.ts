@@ -64,25 +64,29 @@ export class EcloudAdapter extends CloudDocAdapter {
     return res.text();
   }
 
-  private async fetchJson<T>(url: string): Promise<T> {
-    const res = await fetch(url, {
-      headers: {
-        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
-        "Accept": "application/json, text/plain, */*",
-        "Accept-Language": "zh-CN,zh;q=0.9,en;q=0.8",
-        "categoryrootparent": "0",
-        "ispreview": "false",
-        "tentid": "0",
-        "Referer": HELP_CENTER_URL,
-        "Cookie": "CmLocation=100|100; CmProvid=bj",
-        "Cache-Control": "no-cache",
-        "Pragma": "no-cache",
-      },
-    });
-    if (!res.ok) {
-      throw new Error(`Fetch failed: ${res.status} ${res.statusText}`);
+  private async fetchJson<T>(url: string): Promise<T | null> {
+    try {
+      const res = await fetch(url, {
+        headers: {
+          "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+          "Accept": "application/json, text/plain, */*",
+          "Accept-Language": "zh-CN,zh;q=0.9,en;q=0.8",
+          "categoryrootparent": "0",
+          "ispreview": "false",
+          "tentid": "0",
+          "Referer": HELP_CENTER_URL,
+          "Cookie": "CmLocation=100|100; CmProvid=bj",
+          "Cache-Control": "no-cache",
+          "Pragma": "no-cache",
+        },
+      });
+      if (!res.ok) {
+        return null;
+      }
+      return res.json() as Promise<T>;
+    } catch {
+      return null;
     }
-    return res.json() as Promise<T>;
   }
 
   async listProducts(): Promise<Product[]> {
@@ -115,6 +119,7 @@ export class EcloudAdapter extends CloudDocAdapter {
 
   private async getOutlineId(productId: string): Promise<number | null> {
     const data = await this.fetchJson<CategoryTreeResponse>(CATEGORY_TREE_API);
+    if (!data?.data?.children) return null;
     let outlineId: number | null = null;
 
     const findOutlineId = (nodes: CategoryNode[]) => {
@@ -129,10 +134,7 @@ export class EcloudAdapter extends CloudDocAdapter {
       }
     };
 
-    if (data.data?.children) {
-      findOutlineId(data.data.children);
-    }
-
+    findOutlineId(data.data.children);
     return outlineId;
   }
 
@@ -169,6 +171,8 @@ export class EcloudAdapter extends CloudDocAdapter {
 
     const items: TocItem[] = [];
     const seen = new Set<string>();
+
+    if (!data?.data?.children) return items;
 
     const extractArticles = (nodes: OutlineNode[]) => {
       for (const node of nodes) {
@@ -208,19 +212,17 @@ export class EcloudAdapter extends CloudDocAdapter {
 
   async getPageMetadata(pageId: string): Promise<PageMetadata> {
     // 使用API获取文章信息
-    const url = `${ARTICLE_INFO_API}/${pageId}`;
-    const data = await this.fetchJson<ArticleInfoResponse>(url);
+    const data = await this.fetchJson<ArticleInfoResponse>(`${ARTICLE_INFO_API}/${pageId}`);
 
-    if (data.code === 200 && data.data) {
+    if (data?.code === 200 && data.data) {
       const article = data.data;
-      // 转换时间戳
       const updateDate = new Date(article.gmtModify).toISOString().split('T')[0].replace(/-/g, '/');
 
       return {
         pageId,
         title: article.title,
         note: `更新时间：${updateDate}`,
-        contentPath: article.content, // 这里存储content hash，供getPageContent使用
+        contentPath: article.content,
       };
     }
 
@@ -240,34 +242,25 @@ export class EcloudAdapter extends CloudDocAdapter {
   }
 
   async getPageContent(contentPath: string): Promise<string> {
-    // contentPath 可能是：
-    // 1. URL (如 https://ecloud.10086.cn/op-help-center/doc/article/23663)
-    // 2. content hash (如 829b0fa97102f05dc2cf01d58c264e42)
-
     let contentHtml: string;
 
     if (contentPath.startsWith("http")) {
-      // 如果是URL，提取articleId
       const match = contentPath.match(/\/article\/(\d+)/);
       if (!match) {
         return htmlToMarkdown(await this.fetchHtml(contentPath));
       }
       const articleId = match[1];
-      // 先获取article info
-      const infoUrl = `${ARTICLE_INFO_API}/${articleId}`;
-      const infoData = await this.fetchJson<ArticleInfoResponse>(infoUrl);
-      if (infoData.code === 200 && infoData.data?.content) {
+      const infoData = await this.fetchJson<ArticleInfoResponse>(`${ARTICLE_INFO_API}/${articleId}`);
+      if (infoData?.code === 200 && infoData.data?.content) {
         contentPath = infoData.data.content;
       } else {
         return htmlToMarkdown(await this.fetchHtml(contentPath));
       }
     }
 
-    // 获取文档内容（HTML格式）
     const contentUrl = `${ARTICLE_CONTENT_API}/${contentPath}`;
     contentHtml = await this.fetchHtml(contentUrl);
 
-    // 提取文档正文内容区域
     const $ = cheerio.load(contentHtml);
     const docContent = $("#doc-content-details");
 
