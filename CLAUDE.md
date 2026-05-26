@@ -19,7 +19,9 @@ src/
 ├── adapters/
 │   ├── index.ts              # 适配器工厂 getAdapter(provider)
 │   ├── base.ts               # 抽象基类 CloudDocAdapter
-│   └── ctyun.ts              # 天翼云适配器
+│   ├── ctyun.ts              # 天翼云适配器
+│   ├── aliyun.ts             # 阿里云适配器
+│   └── volcengine.ts         # 火山引擎适配器
 └── utils/
     └── html-to-md.ts         # HTML 转 Markdown 工具
 ```
@@ -40,6 +42,7 @@ src/
 |----------|------|------|
 | ctyun | 天翼云 | 已实现 |
 | aliyun | 阿里云 | 已实现 |
+| volcengine | 火山引擎 | 已实现 |
 
 ## 常用命令
 
@@ -54,12 +57,15 @@ npm run build    # 构建
 |---------|--------|
 | 天翼云电脑（政企版） | 10027004 |
 | 弹性云主机 ECS | 10026730 |
+| 对象存储 TOS | 6349 |
+| 云服务器 ECS | 6396 |
 
 ## 注意事项
 
 - `GetFolderBook` API 已废弃，目录需从 HTML 页面提取
 - 所有工具为只读操作
 - 天翼云 API 无需认证
+- 火山引擎 API 无需认证，文档内容直接返回 Markdown（`MDContent` 字段）
 - 详细 API 规范见 `skills/ctyun-docs-search/SKILL.md`
 
 ## 部署与验证

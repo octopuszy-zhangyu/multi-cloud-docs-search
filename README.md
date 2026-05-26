@@ -37,6 +37,8 @@
 | provider | 名称 | 状态 |
 |----------|------|------|
 | ctyun | 天翼云 | 已实现 |
+| aliyun | 阿里云 | 已实现 |
+| volcengine | 火山引擎 | 已实现 |
 
 ## 本地开发
 
@@ -61,7 +63,9 @@ src/
 ├── adapters/
 │   ├── index.ts              # 适配器工厂 getAdapter(provider)
 │   ├── base.ts               # 抽象基类 CloudDocAdapter
-│   └── ctyun.ts              # 天翼云适配器
+│   ├── ctyun.ts              # 天翼云适配器
+│   ├── aliyun.ts             # 阿里云适配器
+│   └── volcengine.ts         # 火山引擎适配器
 └── utils/
     └── html-to-md.ts         # HTML 转 Markdown 工具
 ```
