@@ -78,43 +78,59 @@ export class TencentAdapter extends CloudDocAdapter {
     const $ = cheerio.load(html);
 
     const items: TocItem[] = [];
+    const seen = new Set<string>();
 
-    // 从侧边栏目录提取
-    // 格式: <a class="rno-column-aside-menu J-navLayer" data-node="44971" data-level="1" data-link="/document/product/213/44971" href="/document/product/213/44971" title="新手指引">
+    // 方法1: 从侧边栏目录提取 (data-node 属性)
     $(".rno-column-aside-menu[data-node]").each((_, el) => {
       const dataNode = $(el).attr("data-node");
       const dataLink = $(el).attr("data-link");
       const title = $(el).attr("title") || $(el).find("h4").text().trim();
       const href = $(el).attr("href") || dataLink || "";
 
-      if (dataNode && title) {
-        // pageId 格式: productId/pageId
-        const pageId = `${productId}/${dataNode}`;
+      if (dataNode && title && !seen.has(dataNode)) {
+        seen.add(dataNode);
         items.push({
-          pageId,
+          pageId: `${productId}/${dataNode}`,
           title,
         });
       }
     });
 
-    // 如果侧边栏没有，尝试从页面内容中提取
-    if (items.length === 0) {
-      $("a[href^='/document/product/" + productId + "/']").each((_, el) => {
-        const href = $(el).attr("href") || "";
-        const match = href.match(/^\/document\/product\/\d+\/(\d+)/);
-        if (match) {
-          const pageId = match[1];
-          const title = $(el).text().trim();
+    // 方法2: 从侧边栏提取所有链接
+    $(".rno-column-aside-bd-2 a, .doc-aside-wrap a, .rno-column-aside-menu-wrap a").each((_, el) => {
+      const href = $(el).attr("href") || "";
+      const match = href.match(/^\/document\/product\/\d+\/(\d+)/);
+      if (match) {
+        const pageId = match[1];
+        const title = $(el).text().trim() || $(el).attr("title") || "";
 
-          if (pageId && title && !items.find(i => i.pageId === pageId)) {
-            items.push({
-              pageId: `${productId}/${pageId}`,
-              title,
-            });
-          }
+        if (pageId && title && !seen.has(pageId)) {
+          seen.add(pageId);
+          items.push({
+            pageId: `${productId}/${pageId}`,
+            title,
+          });
         }
-      });
-    }
+      }
+    });
+
+    // 方法3: 从页面内容中提取文档链接
+    $("a[href^='/document/product/" + productId + "/']").each((_, el) => {
+      const href = $(el).attr("href") || "";
+      const match = href.match(/^\/document\/product\/\d+\/(\d+)/);
+      if (match) {
+        const pageId = match[1];
+        const title = $(el).text().trim();
+
+        if (pageId && title && !seen.has(pageId)) {
+          seen.add(pageId);
+          items.push({
+            pageId: `${productId}/${pageId}`,
+            title,
+          });
+        }
+      }
+    });
 
     return items;
   }
