@@ -86,29 +86,29 @@ export class EcloudAdapter extends CloudDocAdapter {
   }
 
   async listProducts(): Promise<Product[]> {
-    const data = await this.fetchJson<CategoryTreeResponse>(CATEGORY_TREE_API);
+    // 移动云API可能屏蔽Cloudflare Workers IP，使用HTML解析作为主要方式
+    const html = await this.fetchHtml(HELP_CENTER_URL);
+    const $ = cheerio.load(html);
+
     const products: Product[] = [];
     const seen = new Set<string>();
 
-    // 递归提取所有叶子节点（产品）
-    const extractProducts = (nodes: CategoryNode[], parentName: string) => {
-      for (const node of nodes) {
-        if (node.children && node.children.length > 0) {
-          extractProducts(node.children, node.name);
-        } else if (node.id && !seen.has(String(node.id))) {
-          seen.add(String(node.id));
-          products.push({
-            productId: String(node.id),
-            name: node.name,
-            description: parentName,
-          });
-        }
-      }
-    };
+    // 从首页提取产品分类链接
+    // 格式: https://ecloud.10086.cn/op-help-center/doc/category/706
+    $("a[href*='/doc/category/']").each((_, el) => {
+      const href = $(el).attr("href") || "";
+      const title = $(el).text().trim();
 
-    if (data.data?.children) {
-      extractProducts(data.data.children, "");
-    }
+      const match = href.match(/\/doc\/category\/(\d+)/);
+      if (match && title && !seen.has(match[1])) {
+        seen.add(match[1]);
+        products.push({
+          productId: match[1],
+          name: title,
+          description: "",
+        });
+      }
+    });
 
     return products;
   }
