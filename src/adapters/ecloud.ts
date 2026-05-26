@@ -5,17 +5,31 @@ import { htmlToMarkdown } from "../utils/html-to-md";
 const BASE_URL = "https://ecloud.10086.cn";
 const HELP_CENTER_URL = `${BASE_URL}/op-help-center`;
 const CATEGORY_TREE_API = `${HELP_CENTER_URL}/request-api/service-api/category/tree`;
+const OUTLINE_TREE_API = `${HELP_CENTER_URL}/request-api/service-api/outline/tree`;
 
 interface CategoryNode {
   id: number;
   parentId: number;
   name: string;
+  outlineId?: number;
   children?: CategoryNode[];
 }
 
 interface CategoryTreeResponse {
   code: number;
   data: CategoryNode;
+}
+
+interface OutlineNode {
+  id: number;
+  name: string;
+  articleId: number | null;
+  children?: OutlineNode[];
+}
+
+interface OutlineTreeResponse {
+  code: number;
+  data: OutlineNode;
 }
 
 export class EcloudAdapter extends CloudDocAdapter {
@@ -81,29 +95,81 @@ export class EcloudAdapter extends CloudDocAdapter {
     return products;
   }
 
+  private async getOutlineId(productId: string): Promise<number | null> {
+    const data = await this.fetchJson<CategoryTreeResponse>(CATEGORY_TREE_API);
+    let outlineId: number | null = null;
+
+    const findOutlineId = (nodes: CategoryNode[]) => {
+      for (const node of nodes) {
+        if (String(node.id) === productId) {
+          outlineId = node.outlineId ?? null;
+          return;
+        }
+        if (node.children && node.children.length > 0) {
+          findOutlineId(node.children);
+        }
+      }
+    };
+
+    if (data.data?.children) {
+      findOutlineId(data.data.children);
+    }
+
+    return outlineId;
+  }
+
   async getDocumentToc(productId: string): Promise<TocItem[]> {
-    const url = `${HELP_CENTER_URL}/doc/category/${productId}`;
-    const html = await this.fetchHtml(url);
-    const $ = cheerio.load(html);
+    const outlineId = await this.getOutlineId(productId);
+    if (!outlineId) {
+      // 备用方案：从HTML页面提取
+      const url = `${HELP_CENTER_URL}/doc/category/${productId}`;
+      const html = await this.fetchHtml(url);
+      const $ = cheerio.load(html);
+
+      const items: TocItem[] = [];
+      const seen = new Set<string>();
+
+      $("a[href*='/doc/article/']").each((_, el) => {
+        const href = $(el).attr("href") || "";
+        const title = $(el).text().trim();
+
+        const match = href.match(/\/doc\/article\/(\d+)/);
+        if (match && title && !seen.has(match[1])) {
+          seen.add(match[1]);
+          items.push({
+            pageId: match[1],
+            title,
+          });
+        }
+      });
+
+      return items;
+    }
+
+    const url = `${OUTLINE_TREE_API}?outlineId=${outlineId}`;
+    const data = await this.fetchJson<OutlineTreeResponse>(url);
 
     const items: TocItem[] = [];
     const seen = new Set<string>();
 
-    // 从左侧目录树提取链接
-    // 格式: https://ecloud.10086.cn/op-help-center/doc/article/23663
-    $("a[href*='/doc/article/']").each((_, el) => {
-      const href = $(el).attr("href") || "";
-      const title = $(el).text().trim();
-
-      const match = href.match(/\/doc\/article\/(\d+)/);
-      if (match && title && !seen.has(match[1])) {
-        seen.add(match[1]);
-        items.push({
-          pageId: match[1],
-          title,
-        });
+    const extractArticles = (nodes: OutlineNode[]) => {
+      for (const node of nodes) {
+        if (node.articleId && !seen.has(String(node.articleId))) {
+          seen.add(String(node.articleId));
+          items.push({
+            pageId: String(node.articleId),
+            title: node.name,
+          });
+        }
+        if (node.children && node.children.length > 0) {
+          extractArticles(node.children);
+        }
       }
-    });
+    };
+
+    if (data.data?.children) {
+      extractArticles(data.data.children);
+    }
 
     return items;
   }
