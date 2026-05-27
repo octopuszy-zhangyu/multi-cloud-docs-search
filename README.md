@@ -192,4 +192,4 @@ get_page_content({ provider: "ctyun", contentPath: "从 get_page_metadata 获取
 
 ## 许可证
 
-MIT
+GPL-3.0
