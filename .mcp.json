@@ -1,8 +1,0 @@
-{
-  "mcpServers": {
-    "multi-cloud-docs-search": {
-      "command": "npx",
-      "args": ["tsx", "https://gh-proxy.com/github.com/octopuszy-zhangyu/multi-cloud-docs-search"]
-    }
-  }
-}
