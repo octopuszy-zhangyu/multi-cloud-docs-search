@@ -11,7 +11,7 @@ description: Use when the user asks about cloud provider products, services, doc
 
 ## 架构
 
-本技能使用 MCP (Model Context Protocol) 工具与 Cloudflare Workers 部署的服务通信。所有工具统一接受 `provider` 参数。
+本技能使用 MCP (Model Context Protocol) stdio 模式运行，通过 `npx multi-cloud-docs-search` 启动。所有工具统一接受 `provider` 参数。
 
 ## 当前支持的云厂商
 
@@ -199,4 +199,4 @@ description: Use when the user asks about cloud provider products, services, doc
 - 联通云文档详情页为 Vue SPA，有反爬保护（JS 混淆 + debugger 断点），`getPageContent` 返回搜索 API 摘要内容
 - 联通云搜索 API（`gateway.cucloud.cn/search/`）可正常访问，用于文档搜索和内容摘要
 - 获取文档正文的推荐方式：`get_page_metadata` → `get_page_content`
-- 本技能已部署到 Cloudflare Workers，GitHub push 后自动部署
+- 本技能已发布到 npm，通过 `npx multi-cloud-docs-search` 直接运行

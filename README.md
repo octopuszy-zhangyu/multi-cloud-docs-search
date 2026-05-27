@@ -91,6 +91,17 @@ npm config set registry https://registry.npmmirror.com/
 
 然后正常使用 `npx multi-cloud-docs-search` 即可。
 
+### 安装 SKILL（让 AI 自动使用）
+
+在 Claude Code 中安装本项目的 SKILL，AI 会自动识别云文档搜索场景并调用 MCP 工具：
+
+```bash
+# 从 GitHub 安装 SKILL
+claude install skill https://gh-proxy.com/github.com/octopuszy-zhangyu/multi-cloud-docs-search
+```
+
+安装后，当用户询问云产品相关问题时，AI 会自动调用 MCP 工具搜索官方文档。
+
 ### 工作原理
 
 ```
