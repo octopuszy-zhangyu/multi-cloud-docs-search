@@ -5,7 +5,7 @@ const BASE_URL = "https://help.aliyun.com";
 export class AliyunAdapter extends CloudDocAdapter {
     provider = "aliyun";
     name = "阿里云";
-    async fetchHtml(url) {
+    async fetchText(url) {
         const res = await fetch(url, {
             headers: {
                 "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
@@ -16,98 +16,135 @@ export class AliyunAdapter extends CloudDocAdapter {
         }
         return res.text();
     }
-    async fetchJson(url) {
-        const res = await fetch(url, {
-            headers: {
-                "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
-                "Accept": "application/json",
-            },
-        });
-        if (!res.ok) {
-            throw new Error(`Fetch failed: ${res.status} ${res.statusText}`);
-        }
-        return res.json();
-    }
-    async listProducts() {
-        const url = `${BASE_URL}/help/json/mainMenu.json?website=cn&language=zh`;
-        const raw = await this.fetchJson(url);
-        const products = [];
-        const children = raw.data?.children;
-        if (!children)
-            return products;
-        // 遍历 JSON 树结构，提取 level=4 的产品节点
-        const extractProducts = (nodes) => {
-            for (const node of nodes) {
-                if (node.level === 4 && node.nodeType === 16) {
-                    products.push({
-                        productId: node.alias?.replace(/^\//, "") || String(node.id),
-                        name: node.title,
-                        description: node.desc,
-                    });
-                }
-                if (node.children) {
-                    extractProducts(node.children);
-                }
-            }
-        };
-        extractProducts(children);
-        return products;
-    }
-    async getDocumentToc(productId) {
-        const url = `${BASE_URL}/help/json/product.json?alias=/${productId}/&website=cn&language=zh`;
-        const raw = await this.fetchJson(url);
-        const items = [];
-        const learningPath = raw.data?.learningPath;
-        if (!learningPath)
-            return items;
-        const chapters = learningPath.chapters || [];
-        for (const chapter of chapters) {
-            const sections = chapter.sections || [];
-            for (const section of sections) {
-                const sectionItems = section.items || [];
-                for (const item of sectionItems) {
-                    if (item.url) {
-                        // 从 URL 中提取路径作为 pageId，如 /zh/ecs/product-overview/what-is-ecs
-                        const pageId = item.url.replace(/^https?:\/\/[^\/]+/, "");
-                        items.push({
-                            pageId,
-                            title: item.title,
-                        });
+    /**
+     * 解析 llms.txt 格式的文档索引
+     *
+     * 格式: - [标题](URL): 描述
+     */
+    parseLlmsTxt(text) {
+        const entries = [];
+        const lines = text.split("\n");
+        for (const line of lines) {
+            const trimmed = line.trim();
+            const match = trimmed.match(/^\s*-\s*\[([^\]]+)\]\(([^)]+)\)(?:\s*:\s*(.*))?$/);
+            if (match) {
+                const title = match[1].trim();
+                const url = match[2].trim();
+                const description = match[3]?.trim();
+                let path;
+                if (url.startsWith("http")) {
+                    try {
+                        path = new URL(url).pathname;
+                    }
+                    catch {
+                        path = url;
                     }
                 }
+                else {
+                    path = url;
+                }
+                entries.push({ title, path, description });
+            }
+        }
+        return entries;
+    }
+    /**
+     * 从根 llms.txt 获取所有产品列表
+     *
+     * 根 llms.txt 中产品级条目指向 /zh/{productId}/llms.txt
+     */
+    async listProducts() {
+        const text = await this.fetchText(`${BASE_URL}/llms.txt`);
+        const entries = this.parseLlmsTxt(text);
+        const products = [];
+        const seen = new Set();
+        for (const entry of entries) {
+            const productMatch = entry.path.match(/^\/zh\/([^/]+)\/llms\.txt$/);
+            if (productMatch) {
+                const productId = productMatch[1];
+                if (!seen.has(productId)) {
+                    seen.add(productId);
+                    products.push({
+                        productId,
+                        name: entry.title,
+                        description: entry.description,
+                    });
+                }
+            }
+        }
+        return products;
+    }
+    /**
+     * 从产品级 llms.txt 获取文档目录
+     */
+    async getDocumentToc(productId) {
+        const text = await this.fetchText(`${BASE_URL}/zh/${productId}/llms.txt`);
+        const entries = this.parseLlmsTxt(text);
+        const items = [];
+        const seen = new Set();
+        for (const entry of entries) {
+            if (!seen.has(entry.path)) {
+                seen.add(entry.path);
+                items.push({ pageId: entry.path, title: entry.title });
             }
         }
         return items;
     }
+    /**
+     * 从产品级 llms.txt 搜索文档（标题+描述匹配）
+     */
     async searchDocuments(productId, keyword) {
-        // 阿里云没有公开的搜索 API，通过遍历文档目录做本地关键词匹配
-        const toc = await this.getDocumentToc(productId);
+        const text = await this.fetchText(`${BASE_URL}/zh/${productId}/llms.txt`);
+        const entries = this.parseLlmsTxt(text);
         const lowerKeyword = keyword.toLowerCase();
-        return toc
-            .filter((item) => item.title.toLowerCase().includes(lowerKeyword))
-            .map((item) => ({
-            pageId: item.pageId,
-            title: item.title,
-            description: undefined,
-        }));
+        const results = [];
+        const seen = new Set();
+        for (const entry of entries) {
+            if (seen.has(entry.path))
+                continue;
+            seen.add(entry.path);
+            if (entry.title.toLowerCase().includes(lowerKeyword) ||
+                (entry.description && entry.description.toLowerCase().includes(lowerKeyword))) {
+                results.push({
+                    pageId: entry.path,
+                    title: entry.title,
+                    description: entry.description,
+                });
+            }
+        }
+        return results;
     }
+    /**
+     * 获取页面元信息
+     *
+     * pageId 是文档路径（如 /zh/ecs/user-guide/what-is-ecs.md），
+     * 去掉 .md 后缀后获取 HTML 页面提取标题和描述。
+     */
     async getPageMetadata(pageId) {
-        // pageId 是文档路径，如 /zh/ecs/user-guide/after-the-security-group
-        const url = `${BASE_URL}${pageId}`;
-        const html = await this.fetchHtml(url);
+        // 去掉 .md 后缀，获取 HTML 页面
+        const htmlPath = pageId.replace(/\.md$/, "");
+        const url = `${BASE_URL}${htmlPath}`;
+        const html = await this.fetchText(url);
         const $ = cheerio.load(html);
         const title = $("title").text().trim() || $("h1").first().text().trim() || "";
         const description = $('meta[name="description"]').attr("content") || "";
-        const contentPath = url;
         return {
             pageId,
             title,
             note: description,
-            contentPath,
+            contentPath: url,
         };
     }
+    /**
+     * 获取文档 Markdown 正文
+     *
+     * 阿里云的 .md 文件实际包含 HTML 内容，需要 HTML 转 Markdown。
+     */
     async getPageContent(contentPath) {
-        const html = await this.fetchHtml(contentPath);
-        return htmlToMarkdown(html);
+        // 尝试获取 .md 文件（阿里云 .md 文件实际是 HTML 内容）
+        const mdUrl = contentPath.endsWith(".md") ? contentPath : `${contentPath}.md`;
+        const url = mdUrl.startsWith("http") ? mdUrl : `${BASE_URL}${mdUrl}`;
+        const content = await this.fetchText(url);
+        return htmlToMarkdown(content);
     }
 }
