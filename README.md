@@ -42,6 +42,7 @@
 | tencent | 腾讯云 | 已实现 |
 | huawei | 华为云 | 已实现 |
 | ecloud | 移动云 | 已实现 |
+| cucloud | 联通云 | 已实现 |
 
 ## 本地开发
 
@@ -71,7 +72,8 @@ src/
 │   ├── volcengine.ts         # 火山引擎适配器
 │   ├── tencent.ts            # 腾讯云适配器
 │   ├── huawei.ts             # 华为云适配器
-│   └── ecloud.ts             # 移动云适配器
+│   ├── ecloud.ts             # 移动云适配器
+│   └── cucloud.ts            # 联通云适配器
 └── utils/
     └── html-to-md.ts         # HTML 转 Markdown 工具
 ```

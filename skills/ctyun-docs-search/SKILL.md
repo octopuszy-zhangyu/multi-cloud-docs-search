@@ -1,6 +1,6 @@
 ---
 name: ctyun-docs-search
-description: Use when the user asks about cloud provider products, services, documentation, or pricing. Supports 天翼云(CTYUN), 阿里云(Aliyun), 火山引擎(Volcengine), 腾讯云(Tencent Cloud), 华为云(Huawei Cloud), 移动云(Ecloud). Searches official cloud provider documentation sites and returns relevant content.
+description: Use when the user asks about cloud provider products, services, documentation, or pricing. Supports 天翼云(CTYUN), 阿里云(Aliyun), 火山引擎(Volcengine), 腾讯云(Tencent Cloud), 华为云(Huawei Cloud), 移动云(Ecloud), 联通云(Cucloud). Searches official cloud provider documentation sites and returns relevant content.
 ---
 
 # 多云文档搜索 (Multi-Cloud Docs Search)
@@ -23,6 +23,7 @@ description: Use when the user asks about cloud provider products, services, doc
 | tencent | 腾讯云 | SSR 渲染，内容需 HTML 转 Markdown |
 | huawei | 华为云 | 公开 API 获取产品列表，HTML 目录，内容需 HTML 转 Markdown |
 | ecloud | 移动云 | API 获取产品列表和文档目录，内容通过 API 返回 HTML |
+| cucloud | 联通云 | 首页 HTML 嵌入 JSON 数据获取产品列表和目录，搜索 API 获取文档摘要 |
 
 ## MCP 工具
 
@@ -120,6 +121,7 @@ description: Use when the user asks about cloud provider products, services, doc
 | tencent | `{productId}/{pageId}` | `213/495` |
 | huawei | `{productId}/{docPath}` | `ecs/productdesc-ecs/zh-cn_topic_0013771112` |
 | ecloud | 纯数字 ID | `23663` |
+| cucloud | 纯数字 ID | `128`（云服务器 ECS） |
 
 ## 常用产品 productId 映射
 
@@ -149,6 +151,13 @@ description: Use when the user asks about cloud provider products, services, doc
 | 云主机 ECS | 706 |
 | 对象存储 EOS | 729 |
 | 虚拟私有云 | 737 |
+
+### 联通云
+| 产品名称 | productId |
+|---------|-----------|
+| 云服务器 ECS | 128 |
+| AI服务平台 AISP | 2357 |
+| 对象存储 OSS | 133 |
 
 > 更多产品 productId 通过 `list_products` 获取
 
@@ -186,5 +195,8 @@ description: Use when the user asks about cloud provider products, services, doc
 - 移动云通过 API 获取产品列表和文档目录，文档内容通过 API 返回 HTML 格式
 - 移动云首页为 SSR 渲染，HTML 内容为空，无法通过 HTML 解析获取产品列表
 - 移动云 API 可能屏蔽 Cloudflare Workers IP，本地 stdio 模式可正常使用
+- 联通云通过首页 HTML 中嵌入的 `finalResConfig` JSON 数据获取产品列表和文档目录
+- 联通云文档详情页为 Vue SPA，有反爬保护（JS 混淆 + debugger 断点），`getPageContent` 返回搜索 API 摘要内容
+- 联通云搜索 API（`gateway.cucloud.cn/search/`）可正常访问，用于文档搜索和内容摘要
 - 获取文档正文的推荐方式：`get_page_metadata` → `get_page_content`
 - 本技能已部署到 Cloudflare Workers，GitHub push 后自动部署

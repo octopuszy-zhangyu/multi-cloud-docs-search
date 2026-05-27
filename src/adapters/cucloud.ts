@@ -5,14 +5,6 @@ import { htmlToMarkdown } from "../utils/html-to-md";
 const SUPPORT_URL = "https://support.cucloud.cn";
 const SEARCH_API = "https://gateway.cucloud.cn/search";
 
-interface CatalogNode {
-  classId: string;
-  className: string;
-  level: number;
-  path: string;
-  childList?: CatalogNode[];
-}
-
 interface SearchDoc {
   document_id: number;
   title: string;
@@ -21,6 +13,7 @@ interface SearchDoc {
   update_date: string;
   path: string;
   product_id: string;
+  breadcrumb?: { class_id: number; class_name: string; doc_id?: number }[];
 }
 
 interface SearchResponse {
@@ -32,11 +25,16 @@ interface SearchResponse {
   };
 }
 
+interface ProductInfo {
+  productId: string;
+  name: string;
+}
+
 export class CucloudAdapter extends CloudDocAdapter {
   readonly provider = "cucloud";
   readonly name = "联通云";
 
-  private catalogData: CatalogNode[] | null = null;
+  private productListCache: ProductInfo[] | null = null;
 
   private async fetchHtml(url: string): Promise<string> {
     const res = await fetch(url, {
@@ -66,159 +64,129 @@ export class CucloudAdapter extends CloudDocAdapter {
     return res.json() as Promise<T>;
   }
 
-  private async getCatalog(): Promise<CatalogNode[]> {
-    if (this.catalogData) return this.catalogData;
+  private async getProductsFromSearch(): Promise<ProductInfo[]> {
+    if (this.productListCache) return this.productListCache;
 
-    const html = await this.fetchHtml(SUPPORT_URL);
+    const productMap = new Map<string, string>();
+    const keywords = ["云", "服务器", "存储", "数据库", "网络", "安全", "容器", "AI", "监控", "负载均衡"];
 
-    // 用栈匹配提取 listData JSON
-    const marker = "listData = [";
-    const start = html.indexOf(marker);
-    if (start === -1) return [];
-
-    let stack = 0;
-    let end = -1;
-    for (let i = start + marker.length; i < html.length; i++) {
-      if (html[i] === "[") stack++;
-      else if (html[i] === "]") {
-        stack--;
-        if (stack === 0) { end = i + 1; break; }
-      }
-    }
-
-    if (end === -1) return [];
-
-    try {
-      const parsed = JSON.parse(html.substring(start + marker.length, end));
-      this.catalogData = parsed.childList || (Array.isArray(parsed) ? parsed : []);
-      return this.catalogData;
-    } catch {
-      // HTML中的JSON可能不完整（缺少闭合括号），尝试修复
-      let jsonStr = html.substring(start + marker.length, end);
-      let brace = 0, bracket = 0;
-      let inStr = false, esc = false;
-      for (let i = 0; i < jsonStr.length; i++) {
-        const c = jsonStr[i];
-        if (esc) { esc = false; continue; }
-        if (c === "\\" && inStr) { esc = true; continue; }
-        if (c === '"' && !esc) { inStr = !inStr; continue; }
-        if (inStr) continue;
-        if (c === "{") brace++;
-        else if (c === "}") brace--;
-        else if (c === "[") bracket++;
-        else if (c === "]") bracket--;
-      }
-      jsonStr += "}".repeat(brace) + "]".repeat(bracket);
+    for (const keyword of keywords) {
+      const url = `${SEARCH_API}/product/queryAll?index=cms_document&pageNo=1&pageSize=20&keyword=${encodeURIComponent(keyword)}&referrer=${encodeURIComponent(SUPPORT_URL)}`;
       try {
-        const parsed = JSON.parse(jsonStr);
-        this.catalogData = parsed.childList || (Array.isArray(parsed) ? parsed : []);
-        return this.catalogData;
+        const data = await this.fetchJson<SearchResponse>(url);
+        if (data.data?.docList) {
+          for (const doc of data.data.docList) {
+            if (doc.product_id && doc.product_name && !productMap.has(doc.product_id)) {
+              productMap.set(doc.product_id, doc.product_name);
+            }
+          }
+        }
       } catch {
-        return [];
+        // 忽略单个关键词的错误
       }
     }
+
+    this.productListCache = Array.from(productMap.entries()).map(([id, name]) => ({
+      productId: id,
+      name,
+    }));
+
+    return this.productListCache;
   }
 
   async listProducts(): Promise<Product[]> {
-    const catalog = await this.getCatalog();
-    const products: Product[] = [];
-    const seen = new Set<string>();
-
-    const extractProducts = (nodes: CatalogNode[]) => {
-      for (const node of nodes) {
-        if (node.level === 3 && !seen.has(node.classId)) {
-          seen.add(node.classId);
-          products.push({
-            productId: node.classId,
-            name: node.className,
-            description: "",
-          });
-        }
-        if (node.childList) {
-          extractProducts(node.childList);
-        }
-      }
-    };
-
-    extractProducts(catalog);
-    return products;
+    const products = await this.getProductsFromSearch();
+    return products.map((p) => ({
+      productId: p.productId,
+      name: p.name,
+      description: "",
+    }));
   }
 
   async getDocumentToc(productId: string): Promise<TocItem[]> {
-    const catalog = await this.getCatalog();
-    const items: TocItem[] = [];
-    const seen = new Set<string>();
+    // 搜索 API 需要 keyword 参数才能返回数据
+    // 使用产品名称作为关键词搜索来获取文档列表
+    const products = await this.getProductsFromSearch();
+    const product = products.find((p) => p.productId === productId);
+    if (!product) return [];
 
-    const findProduct = (nodes: CatalogNode[]): CatalogNode | null => {
-      for (const node of nodes) {
-        if (node.classId === productId) return node;
-        if (node.childList) {
-          const found = findProduct(node.childList);
-          if (found) return found;
-        }
-      }
-      return null;
-    };
-
-    const product = findProduct(catalog);
-    if (!product?.childList) return items;
-
-    const extractToc = (nodes: CatalogNode[], parentPath: string): TocItem[] => {
-      const result: TocItem[] = [];
-      for (const node of nodes) {
-        if (!seen.has(node.classId)) {
-          seen.add(node.classId);
-          const tocItem: TocItem = {
-            pageId: node.classId,
-            title: node.className,
-          };
-          if (node.childList && node.childList.length > 0) {
-            tocItem.children = extractToc(node.childList, node.path);
-          }
-          result.push(tocItem);
-        }
-      }
-      return result;
-    };
-
-    return extractToc(product.childList, product.path);
-  }
-
-  async searchDocuments(productId: string, keyword: string): Promise<SearchResult[]> {
-    const url = `${SEARCH_API}/product/queryAll?index=cms_document&pageNo=1&pageSize=50&keyword=${encodeURIComponent(keyword)}&referrer=${encodeURIComponent(SUPPORT_URL)}`;
+    const url = `${SEARCH_API}/product/queryAll?index=cms_document&pageNo=1&pageSize=50&keyword=${encodeURIComponent(product.name)}&productId=${productId}&referrer=${encodeURIComponent(SUPPORT_URL)}`;
     const data = await this.fetchJson<SearchResponse>(url);
 
     if (!data.data?.docList) return [];
 
-    return data.data.docList
-      .filter((doc) => doc.product_id === productId)
-      .map((doc) => ({
-        pageId: String(doc.document_id),
-        title: doc.title.replace(/<[^>]+>/g, ""),
-        description: doc.content.replace(/<[^>]+>/g, "").substring(0, 200),
-      }));
+    const tocMap = new Map<string, TocItem>();
+
+    for (const doc of data.data.docList) {
+      if (!doc.breadcrumb || doc.breadcrumb.length === 0) continue;
+
+      for (const crumb of doc.breadcrumb) {
+        if (!tocMap.has(String(crumb.class_id))) {
+          tocMap.set(String(crumb.class_id), {
+            pageId: String(crumb.class_id),
+            title: crumb.class_name,
+            children: [],
+          });
+        }
+      }
+
+      const lastCrumb = doc.breadcrumb[doc.breadcrumb.length - 1];
+      if (lastCrumb.doc_id) {
+        const parentId = String(lastCrumb.class_id);
+        const parent = tocMap.get(parentId);
+        if (parent) {
+          if (!parent.children) parent.children = [];
+          parent.children.push({
+            pageId: String(lastCrumb.doc_id),
+            title: doc.title.replace(/<[^>]+>/g, ""),
+          });
+        }
+      }
+    }
+
+    return Array.from(tocMap.values());
+  }
+
+  async searchDocuments(productId: string, keyword: string): Promise<SearchResult[]> {
+    const url = `${SEARCH_API}/product/queryAll?index=cms_document&pageNo=1&pageSize=50&keyword=${encodeURIComponent(keyword)}&productId=${productId}&referrer=${encodeURIComponent(SUPPORT_URL)}`;
+    const data = await this.fetchJson<SearchResponse>(url);
+
+    if (!data.data?.docList) return [];
+
+    return data.data.docList.map((doc) => ({
+      pageId: String(doc.document_id),
+      title: doc.title.replace(/<[^>]+>/g, ""),
+      description: doc.content.replace(/<[^>]+>/g, "").substring(0, 200),
+    }));
   }
 
   async getPageMetadata(pageId: string): Promise<PageMetadata> {
-    // 通过搜索API获取文档信息
-    const url = `${SEARCH_API}/product/queryAll?index=cms_document&pageNo=1&pageSize=1&keyword=&referrer=${encodeURIComponent(SUPPORT_URL)}`;
+    // 通过搜索 API 搜索文档 ID 获取元信息
+    const url = `${SEARCH_API}/product/queryAll?index=cms_document&pageNo=1&pageSize=1&keyword=${pageId}&referrer=${encodeURIComponent(SUPPORT_URL)}`;
     const data = await this.fetchJson<SearchResponse>(url);
 
-    // 搜索API不支持按document_id查询，返回基础信息
-    const docUrl = `${SUPPORT_URL}/document/${pageId}.html`;
+    if (data.data?.docList && data.data.docList.length > 0) {
+      const doc = data.data.docList[0];
+      return {
+        pageId,
+        title: doc.title.replace(/<[^>]+>/g, ""),
+        note: doc.update_date || "",
+        contentPath: `${SUPPORT_URL}/document/${pageId}.html`,
+      };
+    }
 
     return {
       pageId,
       title: "",
       note: "",
-      contentPath: docUrl,
+      contentPath: `${SUPPORT_URL}/document/${pageId}.html`,
     };
   }
 
   async getPageContent(contentPath: string): Promise<string> {
-    // 联通云文档是Vue SPA，直接fetch HTML拿不到内容
-    // 通过搜索API获取文档内容
     const pageId = contentPath.match(/\/(\d+)\.html/)?.[1] || contentPath;
+
+    // 通过搜索 API 获取文档内容
     const url = `${SEARCH_API}/product/queryAll?index=cms_document&pageNo=1&pageSize=50&keyword=&referrer=${encodeURIComponent(SUPPORT_URL)}`;
     const data = await this.fetchJson<SearchResponse>(url);
 
@@ -231,15 +199,18 @@ export class CucloudAdapter extends CloudDocAdapter {
       }
     }
 
-    // 备用：从HTML页面提取
-    const html = await this.fetchHtml(contentPath);
-    const $ = cheerio.load(html);
-    const content = $(".doc-content").first();
-    if (content.length > 0) {
-      content.find("script, style, .doc-adv, .rno-title-module-operate, .rno-document-details-side").remove();
-      return htmlToMarkdown(content.html() || "");
+    // 备用：从 HTML 页面提取
+    try {
+      const html = await this.fetchHtml(contentPath);
+      const $ = cheerio.load(html);
+      const content = $(".doc-content").first();
+      if (content.length > 0) {
+        content.find("script, style, .doc-adv, .rno-title-module-operate, .rno-document-details-side").remove();
+        return htmlToMarkdown(content.html() || "");
+      }
+      return htmlToMarkdown(html);
+    } catch {
+      return "无法获取文档内容";
     }
-
-    return htmlToMarkdown(html);
   }
 }
