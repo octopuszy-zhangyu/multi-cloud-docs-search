@@ -123,8 +123,9 @@ export class GlmAdapter extends CloudDocAdapter {
   private async extractPageContentFromLlmsFull(targetPath: string): Promise<string | null> {
     const fullContent = await this.getLlmsFullContent();
 
-    // 构建 Source 行匹配模式
-    const sourceUrl = targetPath.startsWith("http") ? targetPath : `${BASE_URL}${targetPath}`;
+    // 构建 Source 行匹配模式（llms-full.txt 中的 Source URL 不带 .md 扩展名）
+    const cleanPath = targetPath.replace(/\.md$/, "");
+    const sourceUrl = cleanPath.startsWith("http") ? cleanPath : `${BASE_URL}${cleanPath}`;
     const escapedSource = sourceUrl.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 
     // 匹配 Source 行及其后的内容，直到下一个 # 标题或文件末尾
@@ -195,7 +196,9 @@ export class GlmAdapter extends CloudDocAdapter {
 
   async getPageMetadata(pageId: string): Promise<PageMetadata> {
     // pageId 是路径，如 /cn/guide/start/quick-start
-    const url = `${BASE_URL}${pageId}`;
+    // llms.txt 中的 URL 可能有 .md 扩展名，需要去掉
+    const cleanPath = pageId.replace(/\.md$/, "");
+    const url = `${BASE_URL}${cleanPath}`;
     const html = await this.fetchHtml(url);
     const $ = cheerio.load(html);
 
@@ -207,9 +210,9 @@ export class GlmAdapter extends CloudDocAdapter {
 
     return {
       pageId,
-      title: title || pageId,
+      title: title || cleanPath,
       note: description,
-      contentPath: pageId,
+      contentPath: cleanPath,
     };
   }
 
@@ -224,7 +227,8 @@ export class GlmAdapter extends CloudDocAdapter {
     }
 
     // 回退方案：抓取 HTML 页面并转换
-    const url = contentPath.startsWith("http") ? contentPath : `${BASE_URL}${contentPath}`;
+    const cleanPath = contentPath.replace(/\.md$/, "");
+    const url = cleanPath.startsWith("http") ? cleanPath : `${BASE_URL}${cleanPath}`;
     const html = await this.fetchHtml(url);
 
     if (html.length <= 1) {

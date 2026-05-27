@@ -48,11 +48,25 @@ export class KimiAdapter extends CloudDocAdapter {
         const items = [];
         for (const line of lines) {
             const trimmed = line.trim();
-            // 页面条目行: - 标题: /docs/path 或 - 标题: /docs/path: 描述
-            const itemMatch = trimmed.match(/^-\s+(.+?):\s+(\/docs\/[^\s:]+)(?::\s*(.*))?$/);
+            // 页面条目行: - [标题](URL) 或 - [标题](URL): 描述
+            // URL 可能是完整 URL (https://platform.kimi.com/docs/...) 或相对路径 (/docs/...)
+            const itemMatch = trimmed.match(/^-\s+\[([^\]]+)\]\(([^)]+)\)(?::\s*(.*))?$/);
             if (itemMatch) {
                 const title = itemMatch[1].trim();
-                const path = itemMatch[2].trim();
+                const url = itemMatch[2].trim();
+                // 提取路径部分（去掉域名）
+                let path;
+                if (url.startsWith("http")) {
+                    try {
+                        path = new URL(url).pathname;
+                    }
+                    catch {
+                        path = url;
+                    }
+                }
+                else {
+                    path = url;
+                }
                 items.push({
                     pageId: path,
                     title,
