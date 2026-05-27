@@ -24,6 +24,12 @@ description: Use when the user asks about cloud provider products, services, doc
 | huawei | 华为云 | 公开 API 获取产品列表，HTML 目录，内容需 HTML 转 Markdown |
 | ecloud | 移动云 | API 获取产品列表和文档目录，内容通过 API 返回 HTML |
 | cucloud | 联通云 | 首页 HTML 嵌入 JSON 数据获取产品列表和目录，搜索 API 获取文档摘要 |
+| bailian | 阿里云百炼 | 阿里云帮助中心托管，HTML 解析目录，内容需 HTML 转 Markdown |
+| baidu | 百度云 | 静态 HTML 页面，HTML 解析产品列表和目录，内容需 HTML 转 Markdown |
+| deepseek | DeepSeek | Docusaurus 静态站点，sitemap.xml 获取目录，内容需 HTML 转 Markdown |
+| glm | 智谱 GLM | Mintlify 文档站，llms.txt 获取目录，内容需 HTML 转 Markdown |
+| minimax | MiniMax | Mintlify 文档站，llms.txt 获取目录，内容直接返回 Markdown |
+| kimi | 月之暗面 Kimi | Mintlify 文档站，llms.txt 获取目录，内容需 HTML 转 Markdown |
 
 ## MCP 工具
 
@@ -122,6 +128,12 @@ description: Use when the user asks about cloud provider products, services, doc
 | huawei | `{productId}/{docPath}` | `ecs/productdesc-ecs/zh-cn_topic_0013771112` |
 | ecloud | 纯数字 ID | `23663` |
 | cucloud | 纯数字 ID | `128`（云服务器 ECS） |
+| bailian | 文档路径 | `/zh/model-studio/what-is-model-studio` |
+| baidu | `{productId}/s/{slug}` | `BCC/s/8kbbkwg4p` |
+| deepseek | 文档路径 | `/guides/quick-start` |
+| glm | 文档路径 | `/cn/guide/start/model-overview` |
+| minimax | 文档路径 | `/docs/api-reference/models/openai/list-models` |
+| kimi | 文档路径 | `/docs/getting-started` |
 
 ## 常用产品 productId 映射
 

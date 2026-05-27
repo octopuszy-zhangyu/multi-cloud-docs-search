@@ -20,7 +20,14 @@ const server = new McpServer({
 - volcengine - 火山引擎
 - tencent - 腾讯云
 - huawei - 华为云
-- ecloud - 移动云`,
+- ecloud - 移动云
+	- cucloud - 联通云
+	- bailian - 阿里云百炼
+	- baidu - 百度云
+	- deepseek - DeepSeek
+	- glm - 智谱 GLM
+	- minimax - MiniMax
+	- kimi - 月之暗面 Kimi`,
 });
 server.registerTool("list_products", {
     description: "获取指定云厂商的所有产品文档列表，返回产品名称和对应的 productId",

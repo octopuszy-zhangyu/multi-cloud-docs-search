@@ -6,6 +6,12 @@ import { TencentAdapter } from "./tencent.js";
 import { HuaweiAdapter } from "./huawei.js";
 import { EcloudAdapter } from "./ecloud.js";
 import { CucloudAdapter } from "./cucloud.js";
+import { MinimaxAdapter } from "./minimax.js";
+import { KimiAdapter } from "./kimi.js";
+import { GlmAdapter } from "./glm.js";
+import { BaiduAdapter } from "./baidu.js";
+import { BailianAdapter } from "./bailian.js";
+import { DeepseekAdapter } from "./deepseek.js";
 
 const adapters: Record<string, CloudDocAdapter> = {
   ctyun: new CtyunAdapter(),
@@ -15,6 +21,12 @@ const adapters: Record<string, CloudDocAdapter> = {
   huawei: new HuaweiAdapter(),
   ecloud: new EcloudAdapter(),
   cucloud: new CucloudAdapter(),
+  minimax: new MinimaxAdapter(),
+  kimi: new KimiAdapter(),
+  glm: new GlmAdapter(),
+  baidu: new BaiduAdapter(),
+  bailian: new BailianAdapter(),
+  deepseek: new DeepseekAdapter(),
 };
 
 /** 获取指定云厂商的适配器实例 */

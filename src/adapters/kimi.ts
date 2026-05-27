@@ -1,0 +1,148 @@
+import { CloudDocAdapter, type Product, type TocItem, type SearchResult, type PageMetadata } from "./base.js";
+
+const BASE_URL = "https://platform.kimi.com";
+const LLMS_TXT_URL = `${BASE_URL}/docs/llms.txt`;
+
+/**
+ * 月之暗面 Kimi 开放平台文档适配器
+ *
+ * Kimi 文档站基于 Mintlify 框架，文档页面以 .md 格式提供原始 Markdown 内容。
+ * 文档索引通过 llms.txt 文件获取，该文件列出所有文档页面的标题和路径。
+ */
+export class KimiAdapter extends CloudDocAdapter {
+  readonly provider = "kimi";
+  readonly name = "月之暗面 Kimi";
+
+  private async fetchText(url: string): Promise<string> {
+    const res = await fetch(url, {
+      headers: {
+        "User-Agent":
+          "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+        Accept: "text/plain, text/markdown, text/html",
+      },
+    });
+    if (!res.ok) {
+      throw new Error(`Fetch failed: ${res.status} ${res.statusText} for ${url}`);
+    }
+    return res.text();
+  }
+
+  /**
+   * Kimi 只有一个产品：Kimi API 文档
+   */
+  async listProducts(): Promise<Product[]> {
+    return [
+      {
+        productId: "kimi-api",
+        name: "Kimi API 文档",
+        description: "月之暗面 Kimi 开放平台 API 文档",
+      },
+    ];
+  }
+
+  /**
+   * 从 llms.txt 解析文档目录
+   *
+   * llms.txt 格式：
+   *   # 分类标题
+   *   - 页面标题: /docs/page-path
+   *   - 页面标题: /docs/page-path: 描述
+   */
+  async getDocumentToc(productId: string): Promise<TocItem[]> {
+    const text = await this.fetchText(LLMS_TXT_URL);
+    const lines = text.split("\n");
+
+    const items: TocItem[] = [];
+
+    for (const line of lines) {
+      const trimmed = line.trim();
+
+      // 页面条目行: - 标题: /docs/path 或 - 标题: /docs/path: 描述
+      const itemMatch = trimmed.match(/^-\s+(.+?):\s+(\/docs\/[^\s:]+)(?::\s*(.*))?$/);
+      if (itemMatch) {
+        const title = itemMatch[1].trim();
+        const path = itemMatch[2].trim();
+
+        items.push({
+          pageId: path,
+          title,
+        });
+      }
+    }
+
+    return items;
+  }
+
+  /**
+   * 遍历文档目录，按标题匹配关键词
+   */
+  async searchDocuments(productId: string, keyword: string): Promise<SearchResult[]> {
+    const toc = await this.getDocumentToc(productId);
+    const lowerKeyword = keyword.toLowerCase();
+
+    const results: SearchResult[] = [];
+
+    for (const item of toc) {
+      if (item.title.toLowerCase().includes(lowerKeyword)) {
+        results.push({
+          pageId: item.pageId,
+          title: item.title,
+        });
+      }
+    }
+
+    return results;
+  }
+
+  /**
+   * 获取页面元信息
+   *
+   * 通过请求 .md 页面获取原始 Markdown 内容，从第一个 # 标题提取页面标题。
+   * pageId 格式为 /docs/page-path（如 /docs/api/overview.md）。
+   */
+  async getPageMetadata(pageId: string): Promise<PageMetadata> {
+    // 确保 pageId 以 .md 结尾
+    const mdPath = pageId.endsWith(".md") ? pageId : `${pageId}.md`;
+    const url = `${BASE_URL}${mdPath}`;
+
+    const content = await this.fetchText(url);
+
+    // 从 Markdown 内容中提取标题（第一个 # 开头的行）
+    const titleMatch = content.match(/^#\s+(.+)$/m);
+    const title = titleMatch ? titleMatch[1].trim() : pageId.split("/").pop()?.replace(/\.md$/, "") || pageId;
+
+    // 提取描述（# 标题后的第一段非空文本）
+    const descMatch = content.match(/^#\s+.+?\n\n(.+?)(?:\n\n|\n#)/s);
+    const description = descMatch ? descMatch[1].trim().replace(/\n/g, " ") : undefined;
+
+    return {
+      pageId,
+      title,
+      note: description,
+      contentPath: url,
+      updateDate: undefined,
+    };
+  }
+
+  /**
+   * 获取文档页面 Markdown 正文
+   *
+   * Kimi 文档站直接返回原始 Markdown 内容，无需 HTML 转换。
+   * contentPath 为完整的 .md 页面 URL。
+   */
+  async getPageContent(contentPath: string): Promise<string> {
+    // 如果 contentPath 是相对路径，补全为完整 URL
+    const url = contentPath.startsWith("http") ? contentPath : `${BASE_URL}${contentPath}`;
+
+    const content = await this.fetchText(url);
+
+    // 移除 llms.txt 风格的索引提示行（以 > 开头的行）
+    const cleaned = content
+      .split("\n")
+      .filter((line) => !line.trim().startsWith("> ##"))
+      .join("\n")
+      .trim();
+
+    return cleaned || "(空内容)";
+  }
+}

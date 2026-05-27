@@ -26,7 +26,13 @@ src/
 │   ├── tencent.ts            # 腾讯云适配器
 │   ├── huawei.ts            # 华为云适配器
 │   ├── ecloud.ts            # 移动云适配器
-│   └── cucloud.ts           # 联通云适配器
+│   ├── cucloud.ts           # 联通云适配器
+│   ├── bailian.ts           # 阿里云百炼适配器
+│   ├── baidu.ts             # 百度云适配器
+│   ├── deepseek.ts          # DeepSeek 适配器
+│   ├── glm.ts               # 智谱 GLM 适配器
+│   ├── minimax.ts           # MiniMax 适配器
+│   └── kimi.ts              # 月之暗面 Kimi 适配器
 └── utils/
     └── html-to-md.ts         # HTML 转 Markdown 工具
 ```
@@ -52,6 +58,12 @@ src/
 | huawei | 华为云 | 已实现 |
 | ecloud | 移动云 | 已实现 |
 | cucloud | 联通云 | 已实现 |
+| bailian | 阿里云百炼 | 已实现 |
+| baidu | 百度云 | 已实现 |
+| deepseek | DeepSeek | 已实现 |
+| glm | 智谱 GLM | 已实现 |
+| minimax | MiniMax | 已实现 |
+| kimi | 月之暗面 Kimi | 已实现 |
 
 ## 常用命令
 
@@ -96,6 +108,12 @@ npm run build    # TypeScript 编译检查
 - 联通云通过首页 HTML 中嵌入的 `finalResConfig` JSON 数据获取产品列表和文档目录
 - 联通云文档详情页为 Vue SPA，有反爬保护（JS 混淆 + debugger 断点），`getPageContent` 返回搜索 API 摘要内容
 - 联通云搜索 API（`gateway.cucloud.cn/search/`）可正常访问，用于文档搜索和内容摘要
+- 百炼（bailian）文档托管在阿里云帮助中心，productId 为 `model-studio`，目录需从 HTML 页面解析（JSON API 返回 302 重定向）
+- 百度云（baidu）文档为静态 HTML，产品列表从首页 HTML 解析，文档内容从 `.post__body` 容器提取
+- DeepSeek（deepseek）文档为 Docusaurus 静态站点，通过 sitemap.xml 获取文档目录
+- GLM（glm）文档为 Mintlify 站点，通过 llms.txt 获取目录，通过 llms-full.txt 获取完整内容
+- MiniMax（minimax）文档直接返回 Markdown，无需 HTML 转换，通过 llms.txt 获取目录
+- Kimi（kimi）文档为 Mintlify 站点，通过 llms.txt 获取目录，内容需 HTML 转 Markdown
 - 详细 API 规范见 `skills/multi-cloud-docs-search/SKILL.md`
 
 ## 验证方法

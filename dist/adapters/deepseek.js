@@ -1,0 +1,140 @@
+import * as cheerio from "cheerio";
+import { CloudDocAdapter } from "./base.js";
+import { htmlToMarkdown } from "../utils/html-to-md.js";
+const BASE_URL = "https://api-docs.deepseek.com";
+export class DeepseekAdapter extends CloudDocAdapter {
+    provider = "deepseek";
+    name = "DeepSeek";
+    async fetchText(url) {
+        const res = await fetch(url, {
+            headers: {
+                "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+                Accept: "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
+            },
+        });
+        if (!res.ok) {
+            throw new Error(`Fetch failed: ${res.status} ${res.statusText}`);
+        }
+        return res.text();
+    }
+    /**
+     * 从 sitemap.xml 解析所有文档页面 URL
+     */
+    async fetchSitemapUrls() {
+        const xml = await this.fetchText(`${BASE_URL}/sitemap.xml`);
+        const $ = cheerio.load(xml, { xmlMode: true });
+        const urls = [];
+        $("url > loc").each((_, el) => {
+            const loc = $(el).text().trim();
+            if (!loc)
+                return;
+            // 只保留 api-docs.deepseek.com 下的页面，过滤掉外部链接
+            if (!loc.startsWith(BASE_URL))
+                return;
+            const path = loc.replace(BASE_URL, "");
+            if (!path || path === "/")
+                return;
+            // 从路径中提取标题：去除后缀，将路径分段，取最后一段
+            const segments = path.replace(/\.html?$/, "").split("/").filter(Boolean);
+            const lastSegment = segments[segments.length - 1] || "";
+            // 将 kebab-case 或 snake_case 转为可读标题
+            const title = lastSegment
+                .replace(/[-_]/g, " ")
+                .replace(/\b\w/g, (c) => c.toUpperCase());
+            urls.push({ path, title });
+        });
+        return urls;
+    }
+    async listProducts() {
+        return [
+            {
+                productId: "api-docs",
+                name: "DeepSeek API 文档",
+                description: "DeepSeek API 官方文档",
+            },
+        ];
+    }
+    async getDocumentToc(productId) {
+        const urls = await this.fetchSitemapUrls();
+        // 按路径深度构建树形结构
+        const items = [];
+        const pathMap = new Map();
+        for (const { path, title } of urls) {
+            const segments = path.replace(/\.html?$/, "").split("/").filter(Boolean);
+            const pageId = "/" + segments.join("/");
+            const tocItem = {
+                pageId,
+                title,
+            };
+            pathMap.set(pageId, tocItem);
+            // 找到父级路径
+            if (segments.length > 1) {
+                const parentPath = "/" + segments.slice(0, -1).join("/");
+                const parent = pathMap.get(parentPath);
+                if (parent) {
+                    if (!parent.children) {
+                        parent.children = [];
+                    }
+                    parent.children.push(tocItem);
+                    continue;
+                }
+            }
+            items.push(tocItem);
+        }
+        return items;
+    }
+    async searchDocuments(productId, keyword) {
+        const toc = await this.getDocumentToc(productId);
+        const lowerKeyword = keyword.toLowerCase();
+        const results = [];
+        const searchToc = (items) => {
+            for (const item of items) {
+                if (item.title.toLowerCase().includes(lowerKeyword)) {
+                    results.push({
+                        pageId: item.pageId,
+                        title: item.title,
+                    });
+                }
+                if (item.children) {
+                    searchToc(item.children);
+                }
+            }
+        };
+        searchToc(toc);
+        return results;
+    }
+    async getPageMetadata(pageId) {
+        const url = `${BASE_URL}${pageId}`;
+        const html = await this.fetchText(url);
+        const $ = cheerio.load(html);
+        const title = $("title").first().text().trim() ||
+            $("h1").first().text().trim() ||
+            pageId.split("/").filter(Boolean).pop() ||
+            "";
+        const description = $('meta[name="description"]').attr("content")?.trim() || "";
+        return {
+            pageId,
+            title,
+            note: description,
+            contentPath: url,
+            updateDate: undefined,
+        };
+    }
+    async getPageContent(contentPath) {
+        // contentPath 可能是完整 URL 或相对路径
+        const url = contentPath.startsWith("http") ? contentPath : `${BASE_URL}${contentPath}`;
+        const html = await this.fetchText(url);
+        const $ = cheerio.load(html);
+        // Docusaurus 站点内容通常在 main 或 article 标签内，或 .markdown 类中
+        const mainContent = $("article").html() ||
+            $("main").html() ||
+            $(".markdown").html() ||
+            $(".theme-doc-markdown").html() ||
+            $("body").html() ||
+            "";
+        if (!mainContent) {
+            return "(空内容)";
+        }
+        return htmlToMarkdown(mainContent);
+    }
+}
