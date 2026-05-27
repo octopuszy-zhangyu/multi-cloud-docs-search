@@ -93,11 +93,17 @@ npm config set registry https://registry.npmmirror.com/
 
 ### 安装 SKILL（让 AI 自动使用）
 
-在 Claude Code 中安装本项目的 SKILL，AI 会自动识别云文档搜索场景并调用 MCP 工具：
+安装 SKILL 后，AI 会自动识别云文档搜索场景并调用 MCP 工具：
 
 ```bash
-# 从 GitHub 安装 SKILL
-claude install skill https://gh-proxy.com/github.com/octopuszy-zhangyu/multi-cloud-docs-search
+# 1. 克隆仓库
+git clone https://gh-proxy.com/github.com/octopuszy-zhangyu/multi-cloud-docs-search.git
+
+# 2. 创建 SKILL 符号链接（Linux/macOS）
+ln -s "$(pwd)/multi-cloud-docs-search/skills/multi-cloud-docs-search" ~/.claude/skills/
+
+# 或复制目录（Windows）
+# 将 skills/multi-cloud-docs-search 文件夹复制到 %USERPROFILE%\.claude\skills\
 ```
 
 安装后，当用户询问云产品相关问题时，AI 会自动调用 MCP 工具搜索官方文档。
