@@ -15,7 +15,7 @@
   "mcpServers": {
     "multi-cloud-docs-search": {
       "command": "npx",
-      "args": ["github:octopuszy-zhangyu/multi-cloud-docs-search"]
+      "args": ["octopuszy-zhangyu/multi-cloud-docs-search"]
     }
   }
 }
@@ -30,7 +30,7 @@
   "mcpServers": {
     "multi-cloud-docs-search": {
       "command": "npx",
-      "args": ["github:octopuszy-zhangyu/multi-cloud-docs-search"]
+      "args": ["octopuszy-zhangyu/multi-cloud-docs-search"]
     }
   }
 }
@@ -45,7 +45,7 @@
   "mcpServers": {
     "multi-cloud-docs-search": {
       "command": "npx",
-      "args": ["github:octopuszy-zhangyu/multi-cloud-docs-search"]
+      "args": ["octopuszy-zhangyu/multi-cloud-docs-search"]
     }
   }
 }
@@ -60,7 +60,7 @@
   "mcpServers": {
     "multi-cloud-docs-search": {
       "command": "npx",
-      "args": ["github:octopuszy-zhangyu/multi-cloud-docs-search"]
+      "args": ["octopuszy-zhangyu/multi-cloud-docs-search"]
     }
   }
 }
@@ -73,7 +73,7 @@
   "mcpServers": {
     "multi-cloud-docs-search": {
       "command": "npx",
-      "args": ["github:octopuszy-zhangyu/multi-cloud-docs-search"]
+      "args": ["octopuszy-zhangyu/multi-cloud-docs-search"]
     }
   }
 }
