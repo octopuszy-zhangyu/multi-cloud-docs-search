@@ -3,12 +3,12 @@
   "version": "1.0.0",
   "description": "MCP Server for multi-cloud provider documentation search",
   "type": "module",
-  "main": "src/stdio.ts",
+  "main": "dist/stdio.js",
   "bin": {
-    "multi-cloud-docs-search": "src/stdio.ts"
+    "multi-cloud-docs-search": "dist/stdio.js"
   },
   "scripts": {
-    "start": "npx tsx src/stdio.ts",
+    "start": "node dist/stdio.js",
     "dev": "npx tsx watch src/stdio.ts",
     "build": "npx tsc"
   },
