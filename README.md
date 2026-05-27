@@ -2,15 +2,15 @@
 
 多云文档搜索 MCP Server — 在 AI 编程助手中直接搜索和获取云厂商官方产品文档。采用适配器架构，支持多云厂商扩展。
 
-## 安装（MCP 配置）
+## 安装（AI 可自动执行）
 
-无需手动 clone 或安装，直接在 AI 助手的 MCP 配置中添加以下 stdio 命令即可。
+以下命令 AI 可以直接执行完成安装。
 
-### Claude Code / Claude CLI
+### 一键安装（MCP + SKILL）
 
-在 `~/.claude/settings.json` 中添加：
-
-```json
+```bash
+# 1. 安装 MCP Server 到全局配置
+cat >> ~/.claude.json << 'EOF'
 {
   "mcpServers": {
     "multi-cloud-docs-search": {
@@ -19,94 +19,34 @@
     }
   }
 }
+EOF
+
+# 2. 克隆并安装 SKILL
+git clone https://gh-proxy.com/github.com/octopuszy-zhangyu/multi-cloud-docs-search.git /tmp/multi-cloud-docs-search
+mkdir -p ~/.claude/skills
+ln -sf /tmp/multi-cloud-docs-search/skills/multi-cloud-docs-search ~/.claude/skills/
 ```
 
-### Cursor
+### 仅安装 MCP Server（推荐）
 
-在 Cursor Settings → Extensions → MCP 中添加：
-
-```json
-{
-  "mcpServers": {
-    "multi-cloud-docs-search": {
-      "command": "npx",
-      "args": ["multi-cloud-docs-search"]
-    }
-  }
-}
+```bash
+# 直接通过 npx 运行，无需安装
+npx multi-cloud-docs-search
 ```
 
-### OpenCode
+### 仅安装 SKILL
 
-在 `~/.opencode/settings.json` 中添加：
-
-```json
-{
-  "mcpServers": {
-    "multi-cloud-docs-search": {
-      "command": "npx",
-      "args": ["multi-cloud-docs-search"]
-    }
-  }
-}
+```bash
+git clone https://gh-proxy.com/github.com/octopuszy-zhangyu/multi-cloud-docs-search.git /tmp/multi-cloud-docs-search
+mkdir -p ~/.claude/skills
+ln -sf /tmp/multi-cloud-docs-search/skills/multi-cloud-docs-search ~/.claude/skills/
 ```
 
-### Windsurf
-
-在 `~/.codeium/windsurf/settings.json` 中添加：
-
-```json
-{
-  "mcpServers": {
-    "multi-cloud-docs-search": {
-      "command": "npx",
-      "args": ["multi-cloud-docs-search"]
-    }
-  }
-}
-```
-
-### 通用配置（任意支持 MCP 的客户端）
-
-```json
-{
-  "mcpServers": {
-    "multi-cloud-docs-search": {
-      "command": "npx",
-      "args": ["multi-cloud-docs-search"]
-    }
-  }
-}
-```
-
-> **说明**：`npx multi-cloud-docs-search` 会自动从 npm 下载并执行，无需手动 clone 或构建。国内用户如果 npm 访问慢，可设置 npm 镜像源（见下方说明）。
-
-### 国内镜像（可选）
-
-如果 npm 访问慢，可设置国内镜像源：
+### 国内镜像加速
 
 ```bash
 npm config set registry https://registry.npmmirror.com/
 ```
-
-然后正常使用 `npx multi-cloud-docs-search` 即可。
-
-### 安装 SKILL（让 AI 自动使用）
-
-安装 SKILL 后，AI 会自动识别云文档搜索场景并调用 MCP 工具：
-
-```bash
-# 1. 克隆仓库
-git clone https://gh-proxy.com/github.com/octopuszy-zhangyu/multi-cloud-docs-search.git
-
-# 2. 创建 SKILL 符号链接（Linux/macOS）
-ln -s "$(pwd)/multi-cloud-docs-search/skills/multi-cloud-docs-search" ~/.claude/skills/
-
-# 或复制目录（Windows）
-# 将 skills/multi-cloud-docs-search 文件夹复制到 %USERPROFILE%\.claude\skills\
-```
-
-安装后，当用户询问云产品相关问题时，AI 会自动调用 MCP 工具搜索官方文档。
 
 ### 工作原理
 
