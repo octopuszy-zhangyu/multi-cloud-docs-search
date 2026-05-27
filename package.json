@@ -6,7 +6,7 @@
   "type": "module",
   "main": "dist/stdio.js",
   "bin": {
-    "multi-cloud-docs-search": "dist/stdio.js"
+    "multi-cloud-docs-search": "bin/cli.js"
   },
   "scripts": {
     "start": "node dist/stdio.js",

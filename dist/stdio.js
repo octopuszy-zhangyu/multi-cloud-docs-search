@@ -77,7 +77,7 @@ server.registerTool("get_page_content", {
     const content = await adapter.getPageContent(contentPath);
     return { content: [{ type: "text", text: content }] };
 });
-async function main() {
+export async function main() {
     const transport = new StdioServerTransport();
     await server.connect(transport);
 }
