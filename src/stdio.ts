@@ -6,7 +6,7 @@ import { getAdapter } from "./adapters/index.js";
 const MAX_RESPONSE_CHARS = 80000;
 
 /**
- * 检测响应大小，超限时返回工具调用指引而非原始数据
+ * 检测响应大小，超限时返回指引让 Agent 直接使用 Fetch/curl + Python 获取数据
  */
 function truncateResponse(text: string, toolName: string, args: Record<string, any>): string {
   if (text.length <= MAX_RESPONSE_CHARS) {
@@ -14,39 +14,280 @@ function truncateResponse(text: string, toolName: string, args: Record<string, a
   }
 
   const totalChars = text.length;
-  const argsStr = JSON.stringify(args);
+  const provider = args.provider || "";
+
   let guidance = "";
 
-  switch (toolName) {
-    case "list_products":
-      guidance = `建议使用 grep 或关键词过滤方式缩小范围，或指定更具体的查询条件。`;
-      break;
-    case "get_document_toc":
-      guidance = `建议指定更具体的产品 ID 或使用 search_documents 搜索特定章节。`;
-      break;
-    case "search_documents":
-      guidance = `建议使用更具体的关键词缩小搜索范围。`;
-      break;
-    case "get_page_metadata":
-      guidance = `建议指定更具体的页面 ID。`;
-      break;
-    case "get_page_content":
-      guidance = `建议使用 search_documents 搜索更具体的章节内容，或使用 get_document_toc 定位到更细粒度的页面。`;
-      break;
-    case "get_product_price":
-      guidance = `建议使用 region 和 billingMode 参数分批查询，例如：
-- get_product_price({ provider: "${args.provider}", region: "ap-guangzhou" })
-- get_product_price({ provider: "${args.provider}", billingMode: "PREPAID" })
-- get_product_price({ provider: "${args.provider}", region: "ap-guangzhou", billingMode: "POSTPAID_BY_HOUR" })`;
-      break;
-    default:
-      guidance = `建议使用更具体的参数分批查询。`;
-      break;
+  if (toolName === "get_product_price" && (provider === "tencent" || provider === "all")) {
+    guidance = `请直接使用 Fetch 工具或 curl 获取腾讯云 CVM 价格数据，然后用 Python 筛选所需内容：
+
+--- Fetch + Python 方式 ---
+\`\`\`python
+import json, urllib.request
+
+def fetch_cvm_price(region, charge_type=None):
+    """获取腾讯云 CVM 价格
+    Args:
+        region: 地域，如 ap-guangzhou, ap-shanghai, ap-beijing
+        charge_type: 计费模式，PREPAID(包年包月) 或 POSTPAID_BY_HOUR(按量)，不传则查全部
+    """
+    filters = [{"Name": "instance-charge-type", "Values": [charge_type]}] if charge_type else [
+        {"Name": "instance-charge-type", "Values": ["PREPAID", "POSTPAID_BY_HOUR"]}
+    ]
+    body = json.dumps({
+        "serviceType": "cvm", "action": "DescribeZoneInstanceConfigInfos",
+        "region": region, "cgiName": "api",
+        "data": {"Filters": filters, "Platform": "LINUX", "Version": "2017-03-12"}
+    }).encode()
+    req = urllib.request.Request(
+        f"https://workbench.cloud.tencent.com/cgi/api?i=cvm/DescribeZoneInstanceConfigInfos&region={region}",
+        data=body,
+        headers={"content-type": "application/json", "User-Agent": "Mozilla/5.0"}
+    )
+    resp = urllib.request.urlopen(req)
+    return json.loads(resp.read())
+
+# 示例：查询广州地域所有价格
+data = fetch_cvm_price("ap-guangzhou")
+for item in data.get("data", {}).get("Response", {}).get("InstanceTypeQuotaSet", []):
+    p = item.get("Price", {})
+    print(f"{item['InstanceType']} | {item['Zone']} | {item['InstanceChargeType']} | "
+          f"按量={p.get('UnitPrice', '-')}/h | 包月={p.get('OriginalPrice', '-')}/月")
+\`\`\`
+
+--- curl 方式 ---
+\`\`\`bash
+curl -s -X POST "https://workbench.cloud.tencent.com/cgi/api?i=cvm/DescribeZoneInstanceConfigInfos&region=ap-guangzhou" \\
+  -H "content-type: application/json" -H "User-Agent: Mozilla/5.0" \\
+  -d '{"serviceType":"cvm","action":"DescribeZoneInstanceConfigInfos","region":"ap-guangzhou","cgiName":"api","data":{"Filters":[{"Name":"instance-charge-type","Values":["PREPAID","POSTPAID_BY_HOUR"]}],"Platform":"LINUX","Version":"2017-03-12"}}' \\
+  | python3 -c "import sys,json; d=json.load(sys.stdin); [print(f\"{i['InstanceType']} | {i['Zone']} | {i['InstanceChargeType']} | 按量={i.get('Price',{}).get('UnitPrice','-')}/h | 包月={i.get('Price',{}).get('OriginalPrice','-')}/月\") for i in d.get('data',{}).get('Response',{}).get('InstanceTypeQuotaSet',[])]"
+\`\`\`
+
+可用地域: ap-guangzhou, ap-shanghai, ap-beijing, ap-singapore, na-siliconvalley, eu-frankfurt
+计费模式: PREPAID(包年包月), POSTPAID_BY_HOUR(按量)
+带宽价格: curl -s -X POST "https://workbench.cloud.tencent.com/cgi/api?i=vpc/DescribeInternetChargePrices&region=ap-guangzhou" -H "content-type: application/json" -d '{"serviceType":"vpc","action":"DescribeInternetChargePrices","region":"ap-guangzhou","cgiName":"api","data":{"Filters":[{"Name":"internet-charge-type","Values":["BANDWIDTH_PREPAID_BY_MONTH","BANDWIDTH_POSTPAID_BY_HOUR","TRAFFIC_POSTPAID_BY_HOUR"]}],"Version":"2017-03-12"}}'`;
+
+  } else if (toolName === "get_product_price" && provider === "huawei") {
+    guidance = `请直接使用 Fetch 工具或 curl 获取华为云价格数据，然后用 Python 筛选：
+
+--- 获取产品菜单 ---
+\`\`\`bash
+curl -s "https://portal.huaweicloud.com/rest/cbc/portalcalculatornodeservice/v4/api/menuInfo?sign=common&language=zh-cn" \\
+  -H "User-Agent: Mozilla/5.0" -H "Referer: https://www.huaweicloud.com/pricing/calculator.html"
+\`\`\`
+
+--- 获取全量价格 (替换 urlPath 为目标产品) ---
+\`\`\`python
+import json, urllib.request
+
+def export_prices(url_path):
+    """导出产品全量价格"""
+    body = json.dumps({"urlPath": url_path, "sources": [{"param": "hws.resource.type.vm"}], "type": "JSON", "language": "zh-cn"}).encode()
+    req = urllib.request.Request(
+        "https://portal.huaweicloud.com/rest/cbc/portalcalculatornodeservice/v4/api/export/productlist",
+        data=body,
+        headers={"content-type": "application/json", "User-Agent": "Mozilla/5.0", "Referer": "https://www.huaweicloud.com/pricing/calculator.html"}
+    )
+    resp = urllib.request.urlopen(req)
+    return json.loads(resp.read())
+
+# 示例：导出 ECS 价格
+data = export_prices("ecs")
+for region, items in data.items():
+    for item in items:
+        spec = item.get("resourceSpecCode", "")
+        ondemand = item.get("ONDEMAND", 0)
+        monthly = item.get("MONTHLY_1", 0)
+        if ondemand or monthly:
+            print(f"{region} | {spec} | 按量={ondemand}/h | 包月={monthly}/月")
+\`\`\`
+
+--- MaaS Token 价格 ---
+\`\`\`bash
+curl -s "https://portal.huaweicloud.com/rest/cbc/portalcalculatornodeservice/v4/api/productInfo?urlPath=maas&tag=general.online.portal&region=cn-north-4&tab=calc&sign=common&language=zh-cn" \\
+  -H "User-Agent: Mozilla/5.0" -H "Referer: https://www.huaweicloud.com/pricing/calculator.html"
+\`\`\`
+
+常见 urlPath: ecs, evs, vpc, maas, obs, rds, dds, gaussdb, ces, scm, waf, aad, cdn, sms, dns`;
+
+  } else if (toolName === "get_product_price" && provider === "volcengine") {
+    guidance = `请直接使用 Fetch 工具或 curl 获取火山引擎价格数据：
+
+--- 获取定价表格 ---
+\`\`\`python
+import json, urllib.request
+
+def get_volc_prices(product_code="ECS"):
+    """获取火山引擎产品定价
+    Args:
+        product_code: 产品代码，如 ECS, TOS, RDS for MySQL 等
+    """
+    # 1. 获取 TemplateCode
+    ssr_url = f"https://www.volcengine.com/pricing?product={product_code}&tab=1&__loader=__ssr_without_user/pricing/page&__ssrDirect=true"
+    ssr_resp = urllib.request.urlopen(urllib.request.Request(ssr_url, headers={"User-Agent": "Mozilla/5.0", "Accept": "application/json"}))
+    ssr_data = json.loads(ssr_resp.read())
+    template_code = ssr_data.get("activeProductInfo", {}).get("TemplateInfoList", [{}])[0].get("TemplateCode")
+    if not template_code:
+        print("No template code found")
+        return
+
+    # 2. 获取定价表格
+    body = json.dumps({"TemplateCode": template_code}).encode()
+    req = urllib.request.Request(
+        "https://www.volcengine.com/anonymous-api/trade/price?Action=GetTable&Version=2020-01-01",
+        data=body,
+        headers={"Content-Type": "application/json", "User-Agent": "Mozilla/5.0"}
+    )
+    resp = urllib.request.urlopen(req)
+    table_data = json.loads(resp.read())
+
+    # 3. 解析价格
+    for table in table_data.get("Result", {}).get("TableList", []):
+        for row in table.get("Rows", []):
+            product_name = row.get("Product", "")
+            for pi in row.get("PriceInfoList", []):
+                if pi.get("Price", 0) > 0:
+                    print(f"{product_name} | {row.get('ConfigurationCode','')} | {pi.get('Period','')} | {pi.get('Price')}元")
+
+get_volc_prices("ECS")
+\`\`\`
+
+常见产品代码: ECS, TOS, RDS for MySQL, GPU_Server, volume, IMS`;
+
+  } else if (toolName === "get_document_toc" && provider === "aliyun") {
+    guidance = `请直接使用 Fetch 获取阿里云文档 llms.txt（纯文本 Markdown 格式）：
+
+\`\`\`bash
+# 获取产品文档目录（productId 从 list_products 获取）
+curl -s "https://help.aliyun.com/zh/${args.productId}/llms.txt" | head -200
+\`\`\`
+
+\`\`\`python
+import urllib.request
+# 获取完整目录并用关键词筛选
+url = f"https://help.aliyun.com/zh/${args.productId}/llms.txt"
+resp = urllib.request.urlopen(urllib.request.Request(url, headers={"User-Agent": "Mozilla/5.0"}))
+lines = resp.read().decode()
+# 用关键词筛选，如 "价格", "计费", "规格"
+for line in lines.split("\\n"):
+    if "价格" in line or "计费" in line:
+        print(line)
+\`\`\``;
+
+  } else if (toolName === "get_document_toc" && provider === "huawei") {
+    guidance = `请直接使用 Fetch 获取华为云文档目录 HTML：
+
+\`\`\`bash
+# 获取产品文档目录（productId 如 ecs）
+curl -s "https://support.huaweicloud.com/${args.productId}/v3_support_leftmenu_fragment.html" | grep -oP 'href="[^"]*"\\s*>\\s*[^<]+' | head -100
+\`\`\`
+
+\`\`\`python
+from html.parser import HTMLParser
+import urllib.request
+
+class TocParser(HTMLParser):
+    def __init__(self):
+        super().__init__()
+        self.items = []
+        self._title = ""
+        self._in_link = False
+    def handle_starttag(self, tag, attrs):
+        if tag == "a":
+            attrs_dict = dict(attrs)
+            href = attrs_dict.get("href", "")
+            if href and "/${args.productId}/" in href:
+                self._in_link = True
+                self._href = href
+    def handle_data(self, data):
+        if self._in_link:
+            self._title = data.strip()
+    def handle_endtag(self, tag):
+        if tag == "a" and self._in_link:
+            if self._title:
+                self.items.append((self._href, self._title))
+            self._in_link = False
+
+url = "https://support.huaweicloud.com/${args.productId}/v3_support_leftmenu_fragment.html"
+resp = urllib.request.urlopen(urllib.request.Request(url, headers={"User-Agent": "Mozilla/5.0"}))
+parser = TocParser()
+parser.feed(resp.read().decode())
+for href, title in parser.items:
+    print(f"{title} | {href}")
+\`\`\``;
+
+  } else if (toolName === "get_document_toc" && provider === "tencent") {
+    guidance = `请直接使用 Fetch 获取腾讯云文档目录（从 HTML 中提取）：
+
+\`\`\`bash
+curl -s "https://cloud.tencent.com/document/product/${args.productId}" | grep -oP '"title":"[^"]*","link":"[^"]*"' | head -100
+\`\`\`
+
+\`\`\`python
+import re, urllib.request
+
+url = f"https://cloud.tencent.com/document/product/${args.productId}"
+resp = urllib.request.urlopen(urllib.request.Request(url, headers={"User-Agent": "Mozilla/5.0"}))
+html = resp.read().decode()
+# 提取 hydrated 数据中的目录
+match = re.search(r'__staticRouterHydrationData.*?JSON\\.parse\\("([^"]+)"', html)
+if match:
+    import json
+    data = json.loads(match.group(1).replace('\\\\"', '"'))
+    catalogue = data.get("loaderData", {}).get("product", {}).get("data", {}).get("sidebar", {}).get("catalogue", {})
+    for item in catalogue.get("list", []):
+        title = item.get("title", "")
+        link = item.get("link", "")
+        if title and link:
+            print(f"{title} | {link}")
+\`\`\``;
+
+  } else if (toolName === "list_products" && provider === "huawei") {
+    guidance = `请直接使用 Fetch 获取华为云产品列表：
+
+\`\`\`bash
+curl -s "https://portal.huaweicloud.com/rest/cbc/portaldocdataservice/v1/books/items?appId=CHINA-ZH_CN" \\
+  -H "User-Agent: Mozilla/5.0" -H "Accept: application/json" \\
+  | python3 -c "import sys,json; [print(f\"{p['code']}: {p['title']}\") for c in json.load(sys.stdin)['data'] for p in c['products']]"
+\`\`\``;
+
+  } else if (toolName === "list_products" && provider === "volcengine") {
+    guidance = `请直接使用 Fetch 获取火山引擎产品列表：
+
+\`\`\`bash
+curl -s "https://www.volcengine.com/api/doc/getLibList?Limit=999" \\
+  -H "User-Agent: Mozilla/5.0" -H "Accept: application/json" \\
+  | python3 -c "import sys,json; [print(f\"{r['LibraryID']}: {r['Name']}\") for r in json.load(sys.stdin)['Result']]"
+\`\`\``;
+
+  } else if (toolName === "get_page_content" && provider === "tencent") {
+    guidance = `请直接使用 Fetch 获取腾讯云文档页面：
+
+\`\`\`bash
+curl -s "${args.contentPath}" -H "User-Agent: Mozilla/5.0" | python3 -c "
+import sys, re, html
+text = sys.stdin.read()
+# 提取正文区域（简化）
+text = re.sub(r'<style[^>]*>[^<]*</style>', '', text)
+text = re.sub(r'<script[^>]*>[^<]*</script>', '', text)
+text = re.sub(r'<[^>]+>', '\\n', text)
+text = html.unescape(text)
+lines = [l.strip() for l in text.split('\\n') if l.strip()]
+print('\\n'.join(lines[:200]))
+" | head -300
+\`\`\``;
+
+  } else {
+    guidance = `数据量过大（约 ${totalChars} 字符），请使用 Fetch 或 curl 直接获取原始数据，然后用 Python 筛选：
+
+1. 使用 Fetch 工具获取 ${args.contentPath || args.provider || ""} 的原始内容
+2. 使用 Python 解析并提取所需信息
+3. 如需帮助，请告知具体需要筛选什么内容`;
   }
 
   return `[数据量过大指引]
-工具 ${toolName}(${argsStr}) 返回数据量约 ${totalChars} 字符，无法一次性返回。
-请使用更具体的参数分批查询。
+工具 ${toolName}(${JSON.stringify(args)}) 返回数据量约 ${totalChars} 字符，无法一次性返回。
+请直接使用 Fetch 工具或 curl + Python 获取并筛选数据，无需再调用此 MCP 工具。
 
 ${guidance}`;
 }
