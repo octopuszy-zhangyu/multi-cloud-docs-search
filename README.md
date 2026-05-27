@@ -1,16 +1,19 @@
 # multi-cloud-docs-search
 
-多云文档搜索 MCP Server — 在 AI 编程助手中直接搜索和获取云厂商官方产品文档。采用适配器架构，支持多云厂商扩展。
+多云文档搜索 MCP Server — 在 AI 编程助手中直接搜索和获取云厂商官方产品文档。采用适配器架构，支持 14 个云厂商。
 
-## 安装（AI 可自动执行）
+## 安装
 
-以下命令 AI 可以直接执行完成安装。
-
-### 一键安装（MCP + SKILL）
+### 一键安装
 
 ```bash
-# 1. 安装 MCP Server 到全局配置
-cat >> ~/.claude.json << 'EOF'
+# 直接通过 npx 运行，无需安装
+npx multi-cloud-docs-search
+```
+
+配置到 Claude Code / Cursor / Windsurf 等支持 MCP 的客户端：
+
+```json
 {
   "mcpServers": {
     "multi-cloud-docs-search": {
@@ -19,27 +22,6 @@ cat >> ~/.claude.json << 'EOF'
     }
   }
 }
-EOF
-
-# 2. 克隆并安装 SKILL
-git clone https://gh-proxy.com/github.com/octopuszy-zhangyu/multi-cloud-docs-search.git /tmp/multi-cloud-docs-search
-mkdir -p ~/.claude/skills
-ln -sf /tmp/multi-cloud-docs-search/skills/multi-cloud-docs-search ~/.claude/skills/
-```
-
-### 仅安装 MCP Server（推荐）
-
-```bash
-# 直接通过 npx 运行，无需安装
-npx multi-cloud-docs-search
-```
-
-### 仅安装 SKILL
-
-```bash
-git clone https://gh-proxy.com/github.com/octopuszy-zhangyu/multi-cloud-docs-search.git /tmp/multi-cloud-docs-search
-mkdir -p ~/.claude/skills
-ln -sf /tmp/multi-cloud-docs-search/skills/multi-cloud-docs-search ~/.claude/skills/
 ```
 
 ### 国内镜像加速
@@ -65,6 +47,7 @@ npm config set registry https://registry.npmmirror.com/
 | `search_documents` | provider, productId, keyword | 搜索文档 |
 | `get_page_metadata` | provider, pageId | 获取页面元信息 |
 | `get_page_content` | provider, contentPath | 获取 Markdown 正文 |
+| `get_product_price` | provider, productId? | 获取产品价格信息 |
 
 ## 当前支持的云厂商
 
@@ -77,12 +60,27 @@ npm config set registry https://registry.npmmirror.com/
 | huawei | 华为云 | 已实现 |
 | ecloud | 移动云 | 已实现 |
 | cucloud | 联通云 | 已实现 |
+| bailian | 阿里云百炼 | 已实现 |
+| baidu | 百度云 | 已实现 |
+| deepseek | DeepSeek | 已实现 |
+| glm | 智谱 GLM | 已实现 |
+| minimax | MiniMax | 已实现 |
+| kimi | 月之暗面 Kimi | 已实现 |
+
+## 使用指引
+
+MCP Server 内置了完整的使用指引（instructions），AI 客户端连接后会自动获取。核心原则：
+
+1. **优先浏览目录，迫不得已再搜索**：先 `get_document_toc` 看目录结构，再决定是否搜索
+2. **metadata → content 顺序不可颠倒**：先 `get_page_metadata` 获取 contentPath，再传给 `get_page_content`
+3. **并行调用最大化效率**：无依赖的调用应��行执行
+4. **搜索关键词要宽泛**：用"计费"而非"4C8G价格"
 
 ## 本地开发
 
 ```bash
 # 克隆项目
-git clone https://gh-proxy.com/github.com/octopuszy-zhangyu/multi-cloud-docs-search.git
+git clone https://github.com/octopuszy-zhangyu/multi-cloud-docs-search.git
 cd multi-cloud-docs-search
 
 # 安装依赖
@@ -103,7 +101,7 @@ npm run build
 ```
 src/
 ├── index.ts                  # Cloudflare Worker 入口（保留兼容性，不部署）
-├── stdio.ts                  # 主入口 — stdio 模式 MCP Server
+├── stdio.ts                  # 主入口 — stdio 模式 MCP Server（含 instructions）
 ├── types.ts                  # 类型定义
 ├── adapters/
 │   ├── index.ts              # 适配器工厂 getAdapter(provider)
@@ -114,14 +112,20 @@ src/
 │   ├── tencent.ts            # 腾讯云适配器
 │   ├── huawei.ts             # 华为云适配器
 │   ├── ecloud.ts             # 移动云适配器
-│   └── cucloud.ts            # 联通云适配器
+│   ├── cucloud.ts            # 联通云适配器
+│   ├── bailian.ts            # 阿里云百炼适配器
+│   ├── baidu.ts              # 百度云适配器
+│   ├── deepseek.ts           # DeepSeek 适配器
+│   ├── glm.ts                # 智谱 GLM 适配器
+│   ├── minimax.ts            # MiniMax 适配器
+│   └── kimi.ts               # 月之暗面 Kimi 适配器
 └── utils/
     └── html-to-md.ts         # HTML 转 Markdown 工具
 ```
 
 ## 验证
 
-使用 MCP 工具测试所有 5 个核心功能：
+使用 MCP 工具测试核心功能：
 
 ```bash
 # 1. 测试获取产品列表
@@ -138,6 +142,10 @@ get_page_metadata({ provider: "ctyun", pageId: "10028086" })
 
 # 5. 测试获取页面正文
 get_page_content({ provider: "ctyun", contentPath: "从 get_page_metadata 获取的 contentPath" })
+
+# 6. 测试获取价格
+get_product_price({ provider: "deepseek" })
+get_product_price({ provider: "ctyun", productId: "10027004" })
 ```
 
 ## 许可证

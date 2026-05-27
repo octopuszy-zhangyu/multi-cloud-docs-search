@@ -48,6 +48,23 @@ src/
 | `get_page_content` | provider, contentPath | 获取 Markdown 正文 |
 | `get_product_price` | provider, productId? | 获取产品价格信息 |
 
+## MCP 工具使用指引（重要）
+
+### 调用顺序原则
+1. **先目录，后搜索**：优先调用 `get_document_toc` 浏览目录结构定位章节，迫不得已再调用 `search_documents`
+2. **metadata → content 顺序不可颠倒**：必须先 `get_page_metadata` 获取 contentPath，再将 contentPath 传给 `get_page_content`，不能跳过 metadata 构造 URL
+3. **并行调用最大化效率**：无依赖关系的调用应并行执行（如同时查询多个厂商的 `list_products`、同时获取多个页面的 `get_page_metadata`）
+
+### 搜索注意事项
+- 搜索关键词要宽泛：如搜价格用"计费""价格""规格"，不要用"价格 4C8G"这种具体组合
+- `list_products` 结果可能过大（如阿里云），需分块读取或 grep 过滤
+
+### 各厂商特殊说明
+- **联通云 cucloud**：文档详情页为 Vue SPA 有反爬保护，`get_page_content` 返回搜索 API 摘要而非完整页面，价格信息需从搜索摘要中提取
+- **移动云 ecloud**：contentPath 是 hash 字符串（如 `60daff9598d5c8fe58d847009f94c256`）而非 URL，直接传给 `get_page_content` 即可
+- **华为云 CloudPond 云桌面**：文档只有规格清单，具体价格需联系销售
+- **腾讯云云桌面**：文档未公开具体价格，需官网价格计算器
+
 ## 当前支持的云厂商
 
 | provider | 名称 | 状态 |
@@ -149,7 +166,7 @@ npm run build    # TypeScript 编译检查
 - GLM（glm）文档为 Mintlify 站点，通过 llms.txt 获取目录，通过 llms-full.txt 获取完整内容
 - MiniMax（minimax）文档直接返回 Markdown，无需 HTML 转换，通过 llms.txt 获取目录
 - Kimi（kimi）文档为 Mintlify 站点，通过 llms.txt 获取目录，内容需 HTML 转 Markdown
-- 详细 API 规范见 `skills/multi-cloud-docs-search/SKILL.md`
+- MCP Server 的完整使用指引和注意事项已内置在 stdio.ts 的 instructions 中，通过 npx 安装后自动生效
 
 ## 验证方法
 
