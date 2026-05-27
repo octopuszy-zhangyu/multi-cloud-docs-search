@@ -6,15 +6,16 @@
 
 ## 技术栈
 
-- TypeScript + `@modelcontextprotocol/sdk` + Cloudflare `McpAgent`
-- 部署在 Cloudflare Pages（Git push 自动构建）
+- TypeScript + `@modelcontextprotocol/sdk`
+- 本地 stdio 模式运行（`tsx` 直接执行）
+- 保留 Cloudflare Workers 兼容性（`src/index.ts`），但不部署
 
 ## 项目架构
 
 ```
 src/
-├── index.ts                  # Cloudflare Worker 入口 (McpAgent)
-├── stdio.ts                  # 本地 stdio 模式入口
+├── index.ts                  # Cloudflare Worker 入口（保留兼容性，不部署）
+├── stdio.ts                  # 主入口 — stdio 模式 MCP Server
 ├── types.ts                  # 类型定义
 ├── adapters/
 │   ├── index.ts              # 适配器工厂 getAdapter(provider)
@@ -24,8 +25,8 @@ src/
 │   ├── volcengine.ts         # 火山引擎适配器
 │   ├── tencent.ts            # 腾讯云适配器
 │   ├── huawei.ts            # 华为云适配器
-  ├── ecloud.ts            # 移动云适配器
-  └── cucloud.ts           # 联通云适配器
+│   ├── ecloud.ts            # 移动云适配器
+│   └── cucloud.ts           # 联通云适配器
 └── utils/
     └── html-to-md.ts         # HTML 转 Markdown 工具
 ```
@@ -55,8 +56,9 @@ src/
 ## 常用命令
 
 ```bash
-npm run dev      # 本地开发
-npm run build    # 构建
+npm run start    # 启动 MCP Server（stdio 模式）
+npm run dev      # 开发模式（文件监听）
+npm run build    # TypeScript 编译检查
 ```
 
 ## 常用产品 bookId
@@ -96,14 +98,9 @@ npm run build    # 构建
 - 联通云搜索 API（`gateway.cucloud.cn/search/`）可正常访问，用于文档搜索和内容摘要
 - 详细 API 规范见 `skills/multi-cloud-docs-search/SKILL.md`
 
-## 部署与验证
+## 验证方法
 
-### 部署流程
-1. 代码 push 到 GitHub 后，Cloudflare Pages 会自动构建部署
-2. 等待约 1-2 分钟部署完成
-
-### 验证方法
-部署后使用 MCP 工具测试所有 5 个核心功能：
+使用 MCP 工具测试所有 5 个核心功能：
 
 ```bash
 # 1. 测试获取产品列表

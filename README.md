@@ -4,15 +4,16 @@
 
 ## 快速开始
 
-### 在 Claude 中添加
+### 在 Claude Code 中添加（stdio 模式）
 
 1. 打开 Claude → Settings → Connectors
 2. 选择 Add Custom Connector
-3. 输入 MCP Server URL：
+3. 选择 "Command"（不是 URL）
+4. 输入命令：
    ```
-   https://multi-cloud-docs-search.<你的pages域名>.pages.dev/mcp
+   npx tsx /path/to/multi-cloud-docs-search/src/stdio.ts
    ```
-4. 保存后即可使用
+5. 保存后即可使用
 
 ### 工作原理
 
@@ -50,19 +51,22 @@
 # 安装依赖
 npm install
 
-# 本地启动
+# 启动 MCP Server（stdio 模式）
+npm run start
+
+# 开发模式（文件监听）
 npm run dev
 
-# 部署（Git push 自动构建）
-git push origin main
+# TypeScript 编译检查
+npm run build
 ```
 
 ## 项目结构
 
 ```
 src/
-├── index.ts                  # Cloudflare Worker 入口 (McpAgent)
-├── stdio.ts                  # 本地 stdio 模式入口
+├── index.ts                  # Cloudflare Worker 入口（保留兼容性，不部署）
+├── stdio.ts                  # 主入口 — stdio 模式 MCP Server
 ├── types.ts                  # 类型定义
 ├── adapters/
 │   ├── index.ts              # 适配器工厂 getAdapter(provider)
@@ -78,13 +82,9 @@ src/
     └── html-to-md.ts         # HTML 转 Markdown 工具
 ```
 
-## 部署与验证
+## 验证
 
-### 部署
-代码 push 到 GitHub 后，Cloudflare Pages 会自动构建部署。
-
-### 验证
-部署后使用 MCP 工具测试所有 5 个核心功能：
+使用 MCP 工具测试所有 5 个核心功能：
 
 ```bash
 # 1. 测试获取产品列表

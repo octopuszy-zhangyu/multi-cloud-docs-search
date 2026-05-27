@@ -1,3 +1,4 @@
+// @ts-nocheck — 保留 Cloudflare Workers 兼容性参考，不参与编译
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { McpAgent } from "agents/mcp";
 import { z } from "zod";

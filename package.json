@@ -2,22 +2,20 @@
   "name": "multi-cloud-docs-search",
   "version": "1.0.0",
   "description": "MCP Server for multi-cloud provider documentation search",
-  "main": "src/index.ts",
+  "type": "module",
+  "main": "src/stdio.ts",
   "scripts": {
-    "dev": "wrangler dev",
-    "build": "echo 'No build needed for Workers'",
-    "deploy": "wrangler deploy",
-    "stdio": "npx tsx src/stdio.ts"
+    "start": "npx tsx src/stdio.ts",
+    "dev": "npx tsx watch src/stdio.ts",
+    "build": "npx tsc"
   },
   "dependencies": {
     "@modelcontextprotocol/sdk": "^1.18.0",
-    "agents": "^0.13.2",
     "zod": "^4.0.0",
     "cheerio": "^1.0.0"
   },
   "devDependencies": {
     "@cloudflare/workers-types": "^4.20250301.0",
-    "typescript": "^5.7.0",
-    "wrangler": "^4.0.0"
+    "typescript": "^5.7.0"
   }
 }
