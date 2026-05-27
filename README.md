@@ -15,7 +15,7 @@
   "mcpServers": {
     "multi-cloud-docs-search": {
       "command": "npx",
-      "args": ["github:octopuszy-zhangyu/multi-cloud-docs-search"]
+      "args": ["tsx", "github:octopuszy-zhangyu/multi-cloud-docs-search"]
     }
   }
 }
@@ -30,7 +30,7 @@
   "mcpServers": {
     "multi-cloud-docs-search": {
       "command": "npx",
-      "args": ["github:octopuszy-zhangyu/multi-cloud-docs-search"]
+      "args": ["tsx", "github:octopuszy-zhangyu/multi-cloud-docs-search"]
     }
   }
 }
@@ -45,7 +45,7 @@
   "mcpServers": {
     "multi-cloud-docs-search": {
       "command": "npx",
-      "args": ["github:octopuszy-zhangyu/multi-cloud-docs-search"]
+      "args": ["tsx", "github:octopuszy-zhangyu/multi-cloud-docs-search"]
     }
   }
 }
@@ -60,7 +60,7 @@
   "mcpServers": {
     "multi-cloud-docs-search": {
       "command": "npx",
-      "args": ["github:octopuszy-zhangyu/multi-cloud-docs-search"]
+      "args": ["tsx", "github:octopuszy-zhangyu/multi-cloud-docs-search"]
     }
   }
 }
@@ -73,13 +73,13 @@
   "mcpServers": {
     "multi-cloud-docs-search": {
       "command": "npx",
-      "args": ["github:octopuszy-zhangyu/multi-cloud-docs-search"]
+      "args": ["tsx", "github:octopuszy-zhangyu/multi-cloud-docs-search"]
     }
   }
 }
 ```
 
-> **说明**：`npx github:` 会自动从 GitHub 下载源码并执行，无需手动 clone 或构建。
+> **说明**：`npx tsx github:` 会自动从 GitHub 下载源码并用 tsx 执行 TypeScript，无需手动 clone 或构建。
 
 ### 工作原理
 
