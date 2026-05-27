@@ -1,4 +1,4 @@
-import type { Product, TocItem, SearchResult, PageMetadata } from "./adapters/base";
+import type { Product, TocItem, SearchResult, PageMetadata } from "./adapters/base.js";
 
 // ===== 天翼云 API 响应类型（与现有逻辑兼容） =====
 

@@ -4,6 +4,9 @@
   "description": "MCP Server for multi-cloud provider documentation search",
   "type": "module",
   "main": "src/stdio.ts",
+  "bin": {
+    "multi-cloud-docs-search": "src/stdio.ts"
+  },
   "scripts": {
     "start": "npx tsx src/stdio.ts",
     "dev": "npx tsx watch src/stdio.ts",
@@ -17,5 +20,8 @@
   "devDependencies": {
     "@cloudflare/workers-types": "^4.20250301.0",
     "typescript": "^5.7.0"
+  },
+  "engines": {
+    "node": ">=18"
   }
 }

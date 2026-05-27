@@ -1,5 +1,5 @@
 import * as cheerio from "cheerio";
-import { CloudDocAdapter, type Product, type TocItem, type SearchResult, type PageMetadata } from "./base";
+import { CloudDocAdapter, type Product, type TocItem, type SearchResult, type PageMetadata } from "./base.js";
 
 const BASE_URL = "https://www.volcengine.com";
 

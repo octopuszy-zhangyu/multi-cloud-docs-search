@@ -1,11 +1,11 @@
-import { CloudDocAdapter } from "./base";
-import { CtyunAdapter } from "./ctyun";
-import { AliyunAdapter } from "./aliyun";
-import { VolcengineAdapter } from "./volcengine";
-import { TencentAdapter } from "./tencent";
-import { HuaweiAdapter } from "./huawei";
-import { EcloudAdapter } from "./ecloud";
-import { CucloudAdapter } from "./cucloud";
+import { CloudDocAdapter } from "./base.js";
+import { CtyunAdapter } from "./ctyun.js";
+import { AliyunAdapter } from "./aliyun.js";
+import { VolcengineAdapter } from "./volcengine.js";
+import { TencentAdapter } from "./tencent.js";
+import { HuaweiAdapter } from "./huawei.js";
+import { EcloudAdapter } from "./ecloud.js";
+import { CucloudAdapter } from "./cucloud.js";
 
 const adapters: Record<string, CloudDocAdapter> = {
   ctyun: new CtyunAdapter(),

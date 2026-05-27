@@ -1,6 +1,6 @@
 import * as cheerio from "cheerio";
-import { CloudDocAdapter, type Product, type TocItem, type SearchResult, type PageMetadata } from "./base";
-import { htmlToMarkdown } from "../utils/html-to-md";
+import { CloudDocAdapter, type Product, type TocItem, type SearchResult, type PageMetadata } from "./base.js";
+import { htmlToMarkdown } from "../utils/html-to-md.js";
 
 const BASE_URL = "https://support.huaweicloud.com";
 const PRODUCTS_API = "https://portal.huaweicloud.com/rest/cbc/portaldocdataservice/v1/books/items?appId=CHINA-ZH_CN";

@@ -3,8 +3,8 @@ import type {
   ListForHelpResponse,
   ContentQueryResponse,
   PageMetadataResponse,
-} from "../types";
-import { CloudDocAdapter, type Product, type TocItem, type SearchResult, type PageMetadata } from "./base";
+} from "../types.js";
+import { CloudDocAdapter, type Product, type TocItem, type SearchResult, type PageMetadata } from "./base.js";
 
 const BASE_URL = "https://www.ctyun.cn";
 

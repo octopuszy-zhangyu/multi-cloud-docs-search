@@ -1,6 +1,6 @@
 import * as cheerio from "cheerio";
-import { CloudDocAdapter, type Product, type TocItem, type SearchResult, type PageMetadata } from "./base";
-import { htmlToMarkdown } from "../utils/html-to-md";
+import { CloudDocAdapter, type Product, type TocItem, type SearchResult, type PageMetadata } from "./base.js";
+import { htmlToMarkdown } from "../utils/html-to-md.js";
 
 const BASE_URL = "https://help.aliyun.com";
 
