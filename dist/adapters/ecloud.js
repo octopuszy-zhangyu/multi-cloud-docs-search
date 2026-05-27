@@ -319,7 +319,7 @@ export class EcloudAdapter extends CloudDocAdapter {
         }
         return prices;
     }
-    async getProductPrice(productId) {
+    async getProductPrice(productId, _options) {
         const result = {
             provider: this.provider,
             name: this.name,

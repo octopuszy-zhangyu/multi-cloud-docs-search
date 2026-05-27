@@ -20,18 +20,26 @@ export class HuaweiAdapter extends CloudDocAdapter {
         }
         return res.text();
     }
-    async fetchJson(url) {
-        const res = await fetch(url, {
-            headers: {
-                "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
-                "Accept": "application/json",
-                "Referer": "https://support.huaweicloud.com/",
-            },
-        });
-        if (!res.ok) {
-            throw new Error(`Fetch failed: ${res.status} ${res.statusText}`);
+    async fetchJson(url, timeoutMs = 30000) {
+        const controller = new AbortController();
+        const timeoutId = setTimeout(() => controller.abort(), timeoutMs);
+        try {
+            const res = await fetch(url, {
+                signal: controller.signal,
+                headers: {
+                    "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+                    "Accept": "application/json",
+                    "Referer": "https://support.huaweicloud.com/",
+                },
+            });
+            if (!res.ok) {
+                throw new Error(`Fetch failed: ${res.status} ${res.statusText}`);
+            }
+            return res.json();
         }
-        return res.json();
+        finally {
+            clearTimeout(timeoutId);
+        }
     }
     async listProducts() {
         const data = await this.fetchJson(PRODUCTS_API);
@@ -177,7 +185,7 @@ export class HuaweiAdapter extends CloudDocAdapter {
      * - export/productlist: POST /api/calculator/.../export/productlist — 全量价格导出
      * - productInfo: GET /api/calculator/.../productInfo — 产品配置和价格详情
      */
-    async getProductPrice(productId) {
+    async getProductPrice(productId, _options) {
         const name = this.name;
         let source = "https://www.huaweicloud.com/pricing/calculator.html";
         let prices = [];
@@ -242,42 +250,72 @@ export class HuaweiAdapter extends CloudDocAdapter {
     /**
      * 调用华为云价格计算器 API
      */
-    async fetchCalculatorApi(action, params) {
-        const query = new URLSearchParams(params).toString();
-        const url = `${CALCULATOR_API}/${action}?${query}`;
-        const res = await fetch(url, {
-            headers: {
-                "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36",
-                "Accept": "application/json",
-                "Referer": "https://www.huaweicloud.com/pricing/calculator.html",
-            },
-        });
-        if (!res.ok)
-            return null;
-        return res.json();
+    async fetchCalculatorApi(action, params, timeoutMs = 30000) {
+        const controller = new AbortController();
+        const timeoutId = setTimeout(() => controller.abort(), timeoutMs);
+        try {
+            const query = new URLSearchParams(params).toString();
+            const url = `${CALCULATOR_API}/${action}?${query}`;
+            const res = await fetch(url, {
+                signal: controller.signal,
+                headers: {
+                    "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36",
+                    "Accept": "application/json",
+                    "Referer": "https://www.huaweicloud.com/pricing/calculator.html",
+                },
+            });
+            if (!res.ok)
+                return null;
+            return res.json();
+        }
+        catch (error) {
+            if (error instanceof Error && error.name === "AbortError") {
+                console.error(`fetchCalculatorApi timeout: ${action}`);
+                return null;
+            }
+            throw error;
+        }
+        finally {
+            clearTimeout(timeoutId);
+        }
     }
     /**
      * 调用 export/productlist API 获取全量价格
      */
-    async exportProductList(urlPath) {
-        const res = await fetch(`${CALCULATOR_API}/export/productlist`, {
-            method: "POST",
-            headers: {
-                "accept": "application/json, text/plain, */*",
-                "content-type": "application/json",
-                "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36",
-                "Referer": "https://www.huaweicloud.com/pricing/calculator.html",
-            },
-            body: JSON.stringify({
-                urlPath,
-                sources: [{ param: "hws.resource.type.vm" }],
-                type: "JSON",
-                language: "zh-cn",
-            }),
-        });
-        if (!res.ok)
-            return null;
-        return res.json();
+    async exportProductList(urlPath, timeoutMs = 30000) {
+        const controller = new AbortController();
+        const timeoutId = setTimeout(() => controller.abort(), timeoutMs);
+        try {
+            const res = await fetch(`${CALCULATOR_API}/export/productlist`, {
+                signal: controller.signal,
+                method: "POST",
+                headers: {
+                    "accept": "application/json, text/plain, */*",
+                    "content-type": "application/json",
+                    "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36",
+                    "Referer": "https://www.huaweicloud.com/pricing/calculator.html",
+                },
+                body: JSON.stringify({
+                    urlPath,
+                    sources: [{ param: "hws.resource.type.vm" }],
+                    type: "JSON",
+                    language: "zh-cn",
+                }),
+            });
+            if (!res.ok)
+                return null;
+            return res.json();
+        }
+        catch (error) {
+            if (error instanceof Error && error.name === "AbortError") {
+                console.error(`exportProductList timeout: ${urlPath}`);
+                return null;
+            }
+            throw error;
+        }
+        finally {
+            clearTimeout(timeoutId);
+        }
     }
     /**
      * 解析 export/productlist 返回的价格数据

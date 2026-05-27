@@ -187,7 +187,7 @@ export class DeepseekAdapter extends CloudDocAdapter {
         }
         return prices;
     }
-    async getProductPrice(productId) {
+    async getProductPrice(productId, _options) {
         const url = `${BASE_URL}/quick_start/pricing`;
         const html = await this.fetchText(url);
         const $ = cheerio.load(html);

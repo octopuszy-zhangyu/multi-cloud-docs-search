@@ -142,7 +142,7 @@ export class BaiduAdapter extends CloudDocAdapter {
         }
         return prices;
     }
-    async getProductPrice(productId) {
+    async getProductPrice(productId, _options) {
         const prices = [];
         if (productId) {
             // 百度云产品定价页面通常在 /doc/{productId}/pricing 或产品详情页

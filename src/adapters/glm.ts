@@ -288,7 +288,7 @@ export class GlmAdapter extends CloudDocAdapter {
     return prices;
   }
 
-  async getProductPrice(productId?: string): Promise<PriceResult> {
+  async getProductPrice(productId?: string, _options?: { region?: string; billingMode?: string }): Promise<PriceResult> {
     // GLM 价格页面是 SPA，需要从 llms-full.txt 中查找定价相关内容
     const fullContent = await this.getLlmsFullContent();
 

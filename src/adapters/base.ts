@@ -75,5 +75,5 @@ export abstract class CloudDocAdapter {
   abstract getPageContent(contentPath: string): Promise<string>;
 
   /** 获取产品价格信息 */
-  abstract getProductPrice(productId?: string): Promise<PriceResult>;
+  abstract getProductPrice(productId?: string, options?: { region?: string; billingMode?: string }): Promise<PriceResult>;
 }

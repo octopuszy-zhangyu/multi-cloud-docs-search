@@ -219,8 +219,13 @@ export class TencentAdapter extends CloudDocAdapter {
    * 腾讯云 workbench API（可匿名访问，无需登录，只需基本 cookie）：
    * - POST https://workbench.cloud.tencent.com/cgi/api
    *   支持 CVM、VPC 等产品的 API 调用
+   *
+   * @param productId - 产品 ID，不传或传 cvm/213 等表示 CVM
+   * @param options - 可选过滤参数
+   * @param options.region - 指定地域（如 ap-guangzhou），不传则查询默认 6 个核心地域
+   * @param options.billingMode - 计费模式（PREPAID 包年包月 / POSTPAID_BY_HOUR 按量），不传则查询两种模式
    */
-  async getProductPrice(productId?: string): Promise<PriceResult> {
+  async getProductPrice(productId?: string, options?: { region?: string; billingMode?: string }): Promise<PriceResult> {
     const name = this.name;
     let sourceUrl = "https://buy.cloud.tencent.com/price";
     let prices: PriceItem[] = [];
@@ -235,7 +240,7 @@ export class TencentAdapter extends CloudDocAdapter {
         productId.toLowerCase().includes("ecs");
 
       if (isCvm) {
-        prices = await this.fetchCvmPrices();
+        prices = await this.fetchCvmPrices(options);
         if (prices.length > 0) {
           sourceUrl = "https://buy.cloud.tencent.com/price/cvm/overview";
         }
@@ -261,16 +266,19 @@ export class TencentAdapter extends CloudDocAdapter {
   }
 
   /**
-   * CVM 可用区列表（主要区域）
+   * CVM 可用地域列表（核心 6 个地域）
    */
   private readonly CVM_REGIONS = [
-    "ap-guangzhou", "ap-shanghai", "ap-beijing", "ap-nanjing",
-    "ap-chengdu", "ap-chongqing", "ap-shenzhen-fsi",
-    "ap-hongkong", "ap-singapore", "ap-tokyo",
-    "ap-seoul", "ap-mumbai", "ap-bangkok",
-    "na-siliconvalley", "na-ashburn", "na-toronto",
-    "eu-frankfurt", "eu-moscow",
+    "ap-guangzhou", "ap-shanghai", "ap-beijing",
+    "ap-singapore", "na-siliconvalley", "eu-frankfurt",
   ];
+
+  /**
+   * 获取可用的 CVM 地域列表
+   */
+  getAvailableRegions(): string[] {
+    return [...this.CVM_REGIONS];
+  }
 
   /**
    * 调用 workbench API 获取 CVM 实例价格
@@ -303,20 +311,32 @@ export class TencentAdapter extends CloudDocAdapter {
 
   /**
    * 获取 CVM 全量价格数据
+   *
+   * @param options - 可选过滤参数
+   * @param options.region - 指定地域，不传则查询所有核心地域
+   * @param options.billingMode - 计费模式（PREPAID / POSTPAID_BY_HOUR），不传则查询两种模式
    */
-  private async fetchCvmPrices(): Promise<PriceItem[]> {
+  private async fetchCvmPrices(options?: { region?: string; billingMode?: string }): Promise<PriceItem[]> {
     const prices: PriceItem[] = [];
     const allPrices = new Map<string, PriceItem>();
 
+    // 确定要查询的地域列表
+    const regions = options?.region ? [options.region] : this.CVM_REGIONS;
+
+    // 确定要查询的计费模式
+    const chargeTypes = options?.billingMode
+      ? [options.billingMode]
+      : ["PREPAID", "POSTPAID_BY_HOUR"];
+
     // 并行查询所有地域
-    const regionPromises = this.CVM_REGIONS.map(async (region) => {
+    const regionPromises = regions.map(async (region) => {
       try {
         const result = await this.callWorkbenchApi(
           "cvm/DescribeZoneInstanceConfigInfos",
           region,
           {
             Filters: [
-              { Name: "instance-charge-type", Values: ["PREPAID", "POSTPAID_BY_HOUR"] },
+              { Name: "instance-charge-type", Values: chargeTypes },
             ],
             Platform: "LINUX",
             Version: "2017-03-12",

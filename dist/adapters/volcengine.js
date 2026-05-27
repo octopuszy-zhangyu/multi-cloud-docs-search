@@ -122,7 +122,7 @@ export class VolcengineAdapter extends CloudDocAdapter {
      * - GetTable: POST /anonymous-api/trade/price?Action=GetTable&Version=2020-01-01
      *   返回完整定价表格，每行包含 Product、ConfigurationCode、ChargeItemCode、PriceInfoList
      */
-    async getProductPrice(productId) {
+    async getProductPrice(productId, _options) {
         let prices = [];
         let source = `${BASE_URL}/pricing`;
         try {

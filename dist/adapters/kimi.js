@@ -179,7 +179,7 @@ export class KimiAdapter extends CloudDocAdapter {
         }
         return prices;
     }
-    async getProductPrice(productId) {
+    async getProductPrice(productId, _options) {
         const url = `${BASE_URL}/docs/pricing.md`;
         const markdown = await this.fetchText(url);
         const prices = this.parsePriceTable(markdown);

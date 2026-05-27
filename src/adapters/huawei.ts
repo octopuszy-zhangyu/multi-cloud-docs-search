@@ -38,18 +38,25 @@ export class HuaweiAdapter extends CloudDocAdapter {
     return res.text();
   }
 
-  private async fetchJson<T>(url: string): Promise<T> {
-    const res = await fetch(url, {
-      headers: {
-        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
-        "Accept": "application/json",
-        "Referer": "https://support.huaweicloud.com/",
-      },
-    });
-    if (!res.ok) {
-      throw new Error(`Fetch failed: ${res.status} ${res.statusText}`);
+  private async fetchJson<T>(url: string, timeoutMs = 30000): Promise<T> {
+    const controller = new AbortController();
+    const timeoutId = setTimeout(() => controller.abort(), timeoutMs);
+    try {
+      const res = await fetch(url, {
+        signal: controller.signal,
+        headers: {
+          "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+          "Accept": "application/json",
+          "Referer": "https://support.huaweicloud.com/",
+        },
+      });
+      if (!res.ok) {
+        throw new Error(`Fetch failed: ${res.status} ${res.statusText}`);
+      }
+      return res.json() as Promise<T>;
+    } finally {
+      clearTimeout(timeoutId);
     }
-    return res.json() as Promise<T>;
   }
 
   async listProducts(): Promise<Product[]> {
@@ -218,7 +225,7 @@ export class HuaweiAdapter extends CloudDocAdapter {
    * - export/productlist: POST /api/calculator/.../export/productlist — 全量价格导出
    * - productInfo: GET /api/calculator/.../productInfo — 产品配置和价格详情
    */
-  async getProductPrice(productId?: string): Promise<PriceResult> {
+  async getProductPrice(productId?: string, _options?: { region?: string; billingMode?: string }): Promise<PriceResult> {
     const name = this.name;
     let source = "https://www.huaweicloud.com/pricing/calculator.html";
     let prices: PriceItem[] = [];
@@ -293,44 +300,70 @@ export class HuaweiAdapter extends CloudDocAdapter {
   /**
    * 调用华为云价格计算器 API
    */
-  private async fetchCalculatorApi<T>(action: string, params: Record<string, string>): Promise<T | null> {
-    const query = new URLSearchParams(params).toString();
-    const url = `${CALCULATOR_API}/${action}?${query}`;
+  private async fetchCalculatorApi<T>(action: string, params: Record<string, string>, timeoutMs = 30000): Promise<T | null> {
+    const controller = new AbortController();
+    const timeoutId = setTimeout(() => controller.abort(), timeoutMs);
+    try {
+      const query = new URLSearchParams(params).toString();
+      const url = `${CALCULATOR_API}/${action}?${query}`;
 
-    const res = await fetch(url, {
-      headers: {
-        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36",
-        "Accept": "application/json",
-        "Referer": "https://www.huaweicloud.com/pricing/calculator.html",
-      },
-    });
+      const res = await fetch(url, {
+        signal: controller.signal,
+        headers: {
+          "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36",
+          "Accept": "application/json",
+          "Referer": "https://www.huaweicloud.com/pricing/calculator.html",
+        },
+      });
 
-    if (!res.ok) return null;
-    return res.json() as Promise<T>;
+      if (!res.ok) return null;
+      return res.json() as Promise<T>;
+    } catch (error) {
+      if (error instanceof Error && error.name === "AbortError") {
+        console.error(`fetchCalculatorApi timeout: ${action}`);
+        return null;
+      }
+      throw error;
+    } finally {
+      clearTimeout(timeoutId);
+    }
   }
 
   /**
    * 调用 export/productlist API 获取全量价格
    */
-  private async exportProductList(urlPath: string): Promise<Record<string, any[]> | null> {
-    const res = await fetch(`${CALCULATOR_API}/export/productlist`, {
-      method: "POST",
-      headers: {
-        "accept": "application/json, text/plain, */*",
-        "content-type": "application/json",
-        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36",
-        "Referer": "https://www.huaweicloud.com/pricing/calculator.html",
-      },
-      body: JSON.stringify({
-        urlPath,
-        sources: [{ param: "hws.resource.type.vm" }],
-        type: "JSON",
-        language: "zh-cn",
-      }),
-    });
+  private async exportProductList(urlPath: string, timeoutMs = 30000): Promise<Record<string, any[]> | null> {
+    const controller = new AbortController();
+    const timeoutId = setTimeout(() => controller.abort(), timeoutMs);
+    try {
+      const res = await fetch(`${CALCULATOR_API}/export/productlist`, {
+        signal: controller.signal,
+        method: "POST",
+        headers: {
+          "accept": "application/json, text/plain, */*",
+          "content-type": "application/json",
+          "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36",
+          "Referer": "https://www.huaweicloud.com/pricing/calculator.html",
+        },
+        body: JSON.stringify({
+          urlPath,
+          sources: [{ param: "hws.resource.type.vm" }],
+          type: "JSON",
+          language: "zh-cn",
+        }),
+      });
 
-    if (!res.ok) return null;
-    return res.json() as Promise<Record<string, any[]>>;
+      if (!res.ok) return null;
+      return res.json() as Promise<Record<string, any[]>>;
+    } catch (error) {
+      if (error instanceof Error && error.name === "AbortError") {
+        console.error(`exportProductList timeout: ${urlPath}`);
+        return null;
+      }
+      throw error;
+    } finally {
+      clearTimeout(timeoutId);
+    }
   }
 
   /**

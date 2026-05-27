@@ -395,7 +395,7 @@ export class EcloudAdapter extends CloudDocAdapter {
     return prices;
   }
 
-  async getProductPrice(productId?: string): Promise<PriceResult> {
+  async getProductPrice(productId?: string, _options?: { region?: string; billingMode?: string }): Promise<PriceResult> {
     const result: PriceResult = {
       provider: this.provider,
       name: this.name,

@@ -186,7 +186,7 @@ export class AliyunAdapter extends CloudDocAdapter {
         }
         return prices;
     }
-    async getProductPrice(productId) {
+    async getProductPrice(productId, _options) {
         const prices = [];
         if (productId) {
             // 尝试获取产品定价文档

@@ -206,7 +206,7 @@ export class BailianAdapter extends CloudDocAdapter {
     return prices;
   }
 
-  async getProductPrice(productId?: string): Promise<PriceResult> {
+  async getProductPrice(productId?: string, _options?: { region?: string; billingMode?: string }): Promise<PriceResult> {
     const url = `${BASE_URL}/zh/model-studio/billing`;
     const html = await this.fetchHtml(url);
     const markdown = htmlToMarkdown(html);

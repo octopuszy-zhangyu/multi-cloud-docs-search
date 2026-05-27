@@ -180,7 +180,7 @@ export class CtyunAdapter extends CloudDocAdapter {
      * 通过搜索产品文档中的"价格"、"计费"相关页面，
      * 获取页面内容并解析价格表格。
      */
-    async getProductPrice(productId) {
+    async getProductPrice(productId, _options) {
         const result = {
             provider: this.provider,
             name: this.name,

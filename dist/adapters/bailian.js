@@ -176,7 +176,7 @@ export class BailianAdapter extends CloudDocAdapter {
         }
         return prices;
     }
-    async getProductPrice(productId) {
+    async getProductPrice(productId, _options) {
         const url = `${BASE_URL}/zh/model-studio/billing`;
         const html = await this.fetchHtml(url);
         const markdown = htmlToMarkdown(html);

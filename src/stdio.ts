@@ -3,6 +3,54 @@ import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js"
 import { z } from "zod";
 import { getAdapter } from "./adapters/index.js";
 
+const MAX_RESPONSE_CHARS = 80000;
+
+/**
+ * 检测响应大小，超限时返回工具调用指引而非原始数据
+ */
+function truncateResponse(text: string, toolName: string, args: Record<string, any>): string {
+  if (text.length <= MAX_RESPONSE_CHARS) {
+    return text;
+  }
+
+  const totalChars = text.length;
+  const argsStr = JSON.stringify(args);
+  let guidance = "";
+
+  switch (toolName) {
+    case "list_products":
+      guidance = `建议使用 grep 或关键词过滤方式缩小范围，或指定更具体的查询条件。`;
+      break;
+    case "get_document_toc":
+      guidance = `建议指定更具体的产品 ID 或使用 search_documents 搜索特定章节。`;
+      break;
+    case "search_documents":
+      guidance = `建议使用更具体的关键词缩小搜索范围。`;
+      break;
+    case "get_page_metadata":
+      guidance = `建议指定更具体的页面 ID。`;
+      break;
+    case "get_page_content":
+      guidance = `建议使用 search_documents 搜索更具体的章节内容，或使用 get_document_toc 定位到更细粒度的页面。`;
+      break;
+    case "get_product_price":
+      guidance = `建议使用 region 和 billingMode 参数分批查询，例如：
+- get_product_price({ provider: "${args.provider}", region: "ap-guangzhou" })
+- get_product_price({ provider: "${args.provider}", billingMode: "PREPAID" })
+- get_product_price({ provider: "${args.provider}", region: "ap-guangzhou", billingMode: "POSTPAID_BY_HOUR" })`;
+      break;
+    default:
+      guidance = `建议使用更具体的参数分批查询。`;
+      break;
+  }
+
+  return `[数据量过大指引]
+工具 ${toolName}(${argsStr}) 返回数据量约 ${totalChars} 字符，无法一次性返回。
+请使用更具体的参数分批查询。
+
+${guidance}`;
+}
+
 const server = new McpServer(
   {
     name: "multi-cloud-docs-search",
@@ -191,7 +239,8 @@ server.registerTool(
   async ({ provider }: { provider: string }) => {
     const adapter = getAdapter(provider);
     const products = await adapter.listProducts();
-    return { content: [{ type: "text", text: JSON.stringify(products) }] };
+    const text = JSON.stringify(products);
+    return { content: [{ type: "text", text: truncateResponse(text, "list_products", { provider }) }] };
   }
 );
 
@@ -207,7 +256,8 @@ server.registerTool(
   async ({ provider, productId }: { provider: string; productId: string }) => {
     const adapter = getAdapter(provider);
     const items = await adapter.getDocumentToc(productId);
-    return { content: [{ type: "text", text: JSON.stringify(items, null, 2) }] };
+    const text = JSON.stringify(items, null, 2);
+    return { content: [{ type: "text", text: truncateResponse(text, "get_document_toc", { provider, productId }) }] };
   }
 );
 
@@ -224,7 +274,8 @@ server.registerTool(
   async ({ provider, productId, keyword }: { provider: string; productId: string; keyword: string }) => {
     const adapter = getAdapter(provider);
     const results = await adapter.searchDocuments(productId, keyword);
-    return { content: [{ type: "text", text: JSON.stringify(results, null, 2) }] };
+    const text = JSON.stringify(results, null, 2);
+    return { content: [{ type: "text", text: truncateResponse(text, "search_documents", { provider, productId, keyword }) }] };
   }
 );
 
@@ -240,7 +291,8 @@ server.registerTool(
   async ({ provider, pageId }: { provider: string; pageId: string }) => {
     const adapter = getAdapter(provider);
     const metadata = await adapter.getPageMetadata(pageId);
-    return { content: [{ type: "text", text: JSON.stringify(metadata, null, 2) }] };
+    const text = JSON.stringify(metadata, null, 2);
+    return { content: [{ type: "text", text: truncateResponse(text, "get_page_metadata", { provider, pageId }) }] };
   }
 );
 
@@ -251,12 +303,15 @@ server.registerTool(
     inputSchema: z.object({
       provider: z.string().describe("云厂商标识"),
       productId: z.string().optional().describe("产品 ID（可选，不传则返回所有产品价格概览）"),
+      region: z.string().optional().describe("地域/可用区，如 ap-guangzhou"),
+      billingMode: z.string().optional().describe("计费模式，如 PREPAID（包年包月）、POSTPAID_BY_HOUR（按量）"),
     }).strict(),
   },
-  async ({ provider, productId }: { provider: string; productId?: string }) => {
+  async ({ provider, productId, region, billingMode }: { provider: string; productId?: string; region?: string; billingMode?: string }) => {
     const adapter = getAdapter(provider);
-    const result = await adapter.getProductPrice(productId);
-    return { content: [{ type: "text", text: JSON.stringify(result, null, 2) }] };
+    const result = await adapter.getProductPrice(productId, { region, billingMode });
+    const text = JSON.stringify(result, null, 2);
+    return { content: [{ type: "text", text: truncateResponse(text, "get_product_price", { provider, productId, region, billingMode }) }] };
   }
 );
 
@@ -272,7 +327,7 @@ server.registerTool(
   async ({ provider, contentPath }: { provider: string; contentPath: string }) => {
     const adapter = getAdapter(provider);
     const content = await adapter.getPageContent(contentPath);
-    return { content: [{ type: "text", text: content }] };
+    return { content: [{ type: "text", text: truncateResponse(content, "get_page_content", { provider, contentPath }) }] };
   }
 );
 
