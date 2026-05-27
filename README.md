@@ -1,24 +1,90 @@
 # multi-cloud-docs-search
 
-多云文档搜索 MCP Server — 在 Claude 中直接搜索和获取云厂商官方产品文档。采用适配器架构，支持多云厂商扩展。
+多云文档搜索 MCP Server — 在 AI 编程助手中直接搜索和获取云厂商官方产品文档。采用适配器架构，支持多云厂商扩展。
 
-## 快速开始
+## 安装（MCP 配置）
 
-### 在 Claude Code 中添加（stdio 模式）
+无需手动 clone 或安装，直接在 AI 助手的 MCP 配置中添加以下 stdio 命令即可。
 
-1. 打开 Claude → Settings → Connectors
-2. 选择 Add Custom Connector
-3. 选择 "Command"（不是 URL）
-4. 输入命令：
-   ```
-   npx tsx /path/to/multi-cloud-docs-search/src/stdio.ts
-   ```
-5. 保存后即可使用
+### Claude Code / Claude CLI
+
+在 `~/.claude/settings.json` 中添加：
+
+```json
+{
+  "mcpServers": {
+    "multi-cloud-docs-search": {
+      "command": "npx",
+      "args": ["tsx", "https://gh-proxy.com/github.com/octopuszy-zhangyu/multi-cloud-docs-search"]
+    }
+  }
+}
+```
+
+### Cursor
+
+在 Cursor Settings → Extensions → MCP 中添加：
+
+```json
+{
+  "mcpServers": {
+    "multi-cloud-docs-search": {
+      "command": "npx",
+      "args": ["tsx", "https://gh-proxy.com/github.com/octopuszy-zhangyu/multi-cloud-docs-search"]
+    }
+  }
+}
+```
+
+### OpenCode
+
+在 `~/.opencode/settings.json` 中添加：
+
+```json
+{
+  "mcpServers": {
+    "multi-cloud-docs-search": {
+      "command": "npx",
+      "args": ["tsx", "https://gh-proxy.com/github.com/octopuszy-zhangyu/multi-cloud-docs-search"]
+    }
+  }
+}
+```
+
+### Windsurf
+
+在 `~/.codeium/windsurf/settings.json` 中添加：
+
+```json
+{
+  "mcpServers": {
+    "multi-cloud-docs-search": {
+      "command": "npx",
+      "args": ["tsx", "https://gh-proxy.com/github.com/octopuszy-zhangyu/multi-cloud-docs-search"]
+    }
+  }
+}
+```
+
+### 通用配置（任意支持 MCP 的客户端）
+
+```json
+{
+  "mcpServers": {
+    "multi-cloud-docs-search": {
+      "command": "npx",
+      "args": ["tsx", "https://gh-proxy.com/github.com/octopuszy-zhangyu/multi-cloud-docs-search"]
+    }
+  }
+}
+```
+
+> **说明**：`npx` 会自动从 GitHub 下载源码，`tsx` 直接执行 TypeScript，无需手动 clone 或构建。
 
 ### 工作原理
 
 ```
-用户提问 → 自动调用 MCP 工具 → 搜索云厂商文档 → 返回内容 → Claude 回答
+用户提问 → AI 自动调用 MCP 工具 → 搜索云厂商文档 → 返回内容 → AI 回答
 ```
 
 ## 可用工具
@@ -48,6 +114,10 @@
 ## 本地开发
 
 ```bash
+# 克隆项目
+git clone https://gh-proxy.com/github.com/octopuszy-zhangyu/multi-cloud-docs-search.git
+cd multi-cloud-docs-search
+
 # 安装依赖
 npm install
 
