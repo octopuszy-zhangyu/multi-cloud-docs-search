@@ -135,9 +135,9 @@ npm run build    # TypeScript 编译检查
 | glm | `open.bigmodel.cn/pricing` | ⚠️ SPA 页面 |
 | ctyun | 文档计费说明 | ✅ 可用（需 productId） |
 | aliyun | 文档计费说明 | ✅ 可用（需 productId） |
-| volcengine | 文档计费规则 | ⚠️ 无具体单价 |
-| tencent | 文档计费说明 | ⚠️ 需价格计算器 |
-| huawei | 文档计费说明 | ⚠️ 需价格计算器 |
+| volcengine | 文档计费规则 | ✅ 可用（通过 GetTable API 获取完整定价表格） |
+| tencent | 文档计费说明 | ✅ 可用（CVM 通过 DescribeZoneInstanceConfigInfos API 获取全量价格） |
+| huawei | 文档计费说明 | ✅ 可用（通过 export/productlist API 获取全量价格） |
 | ecloud | 文档价格页面 | ⚠️ 待完善 |
 | cucloud | 文档价格页面 | ⚠️ 待完善 |
 | baidu | 产品页内嵌数据 | ⚠️ 待完善 |
@@ -214,6 +214,12 @@ get_product_price({ provider: "bailian" })
 # 传统云厂商价格（需指定 productId）
 get_product_price({ provider: "ctyun", productId: "11061839" })
 get_product_price({ provider: "aliyun", productId: "model-studio" })
+get_product_price({ provider: "volcengine" })
+get_product_price({ provider: "volcengine", productId: "ECS" })
+get_product_price({ provider: "tencent" })
+get_product_price({ provider: "tencent", productId: "cvm" })
+get_product_price({ provider: "huawei" })
+get_product_price({ provider: "huawei", productId: "maas" })
 ```
 
 ### 验证原则

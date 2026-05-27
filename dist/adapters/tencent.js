@@ -67,11 +67,59 @@ export class TencentAdapter extends CloudDocAdapter {
         const $ = cheerio.load(html);
         const items = [];
         const seen = new Set();
-        // 提取页面中所有文档链接
-        // 支持相对路径 /document/product/213/495 和绝对路径 https://cloud.tencent.com/document/product/213/495
+        // 优先从 __staticRouterHydrationData JSON 中提取完整目录树
+        const scriptContent = $("script")
+            .filter((_, el) => {
+            const text = $(el).text();
+            return text.includes("__staticRouterHydrationData");
+        })
+            .first()
+            .text();
+        if (scriptContent) {
+            try {
+                const match = scriptContent.match(/JSON\.parse\("([\s\S]*?)"\)/);
+                if (match) {
+                    const jsonStr = match[1].replace(/\\"/g, '"');
+                    const data = JSON.parse(jsonStr);
+                    const catalogue = data?.loaderData?.product?.data?.sidebar?.catalogue;
+                    if (catalogue?.list) {
+                        const buildToc = (list) => {
+                            const result = [];
+                            for (const item of list) {
+                                if (item.type === "page" && item.link) {
+                                    const id = item.link.replace(`/document/product/${productId}/`, "");
+                                    if (!seen.has(id)) {
+                                        seen.add(id);
+                                        result.push({
+                                            pageId: `${productId}/${id}`,
+                                            title: item.title,
+                                        });
+                                    }
+                                }
+                                if (item.children) {
+                                    const children = buildToc(item.children);
+                                    if (children.length > 0) {
+                                        result.push({
+                                            pageId: `${productId}/${item.id}`,
+                                            title: item.title,
+                                            children,
+                                        });
+                                    }
+                                }
+                            }
+                            return result;
+                        };
+                        return buildToc(catalogue.list);
+                    }
+                }
+            }
+            catch {
+                // JSON 解析失败，回退到 HTML 解析
+            }
+        }
+        // 回退：从 HTML 中提取文档链接
         $("a[href*='/document/product/" + productId + "/']").each((_, el) => {
             const href = $(el).attr("href") || "";
-            // 匹配 /document/product/213/495 或 https://cloud.tencent.com/document/product/213/495
             const match = href.match(/(?:\/document\/product\/\d+\/(\d+))/);
             if (match) {
                 const pageId = match[1];
@@ -91,13 +139,25 @@ export class TencentAdapter extends CloudDocAdapter {
         // 腾讯云没有公开的搜索 API，通过遍历文档目录做本地关键词匹配
         const toc = await this.getDocumentToc(productId);
         const lowerKeyword = keyword.toLowerCase();
-        return toc
-            .filter((item) => item.title.toLowerCase().includes(lowerKeyword))
-            .map((item) => ({
-            pageId: item.pageId,
-            title: item.title,
-            description: undefined,
-        }));
+        const results = [];
+        const seen = new Set();
+        const searchToc = (items) => {
+            for (const item of items) {
+                if (item.title.toLowerCase().includes(lowerKeyword) && !seen.has(item.pageId)) {
+                    seen.add(item.pageId);
+                    results.push({
+                        pageId: item.pageId,
+                        title: item.title,
+                        description: undefined,
+                    });
+                }
+                if (item.children) {
+                    searchToc(item.children);
+                }
+            }
+        };
+        searchToc(toc);
+        return results;
     }
     async getPageMetadata(pageId) {
         // pageId 格式: productId/pageId (如 213/44971)
@@ -123,33 +183,287 @@ export class TencentAdapter extends CloudDocAdapter {
         return htmlToMarkdown(html);
     }
     /**
+     * 获取腾讯云产品价格
+     *
+     * 实现方式：
+     * - CVM：调用 DescribeZoneInstanceConfigInfos 获取全量实例配置+价格，
+     *       调用 DescribeInternetChargePrices 获取带宽价格
+     * - 其他产品：回退到文档解析逻辑
+     *
+     * 腾讯云 workbench API（可匿名访问，无需登录，只需基本 cookie）：
+     * - POST https://workbench.cloud.tencent.com/cgi/api
+     *   支持 CVM、VPC 等产品的 API 调用
+     */
+    async getProductPrice(productId) {
+        const name = this.name;
+        let sourceUrl = "https://buy.cloud.tencent.com/price";
+        let prices = [];
+        try {
+            // 判断是否为 CVM 产品
+            const isCvm = !productId ||
+                productId === "cvm" ||
+                productId === "213" ||
+                productId.toLowerCase().includes("cvm") ||
+                productId.toLowerCase().includes("云服务器") ||
+                productId.toLowerCase().includes("ecs");
+            if (isCvm) {
+                prices = await this.fetchCvmPrices();
+                if (prices.length > 0) {
+                    sourceUrl = "https://buy.cloud.tencent.com/price/cvm/overview";
+                }
+            }
+            else {
+                // 非 CVM 产品，使用计算器 API 或回退文档解析
+                prices = await this.fetchProductPrice(productId);
+            }
+        }
+        catch (error) {
+            console.error("获取腾讯云价格信息失败:", error);
+        }
+        // 如果 API 方式没拿到数据，回退文档解析
+        if (prices.length === 0) {
+            prices = await this.fallbackParsePrice(productId);
+        }
+        return {
+            provider: this.provider,
+            name,
+            prices,
+            source: sourceUrl,
+        };
+    }
+    /**
+     * CVM 可用区列表（主要区域）
+     */
+    CVM_REGIONS = [
+        "ap-guangzhou", "ap-shanghai", "ap-beijing", "ap-nanjing",
+        "ap-chengdu", "ap-chongqing", "ap-shenzhen-fsi",
+        "ap-hongkong", "ap-singapore", "ap-tokyo",
+        "ap-seoul", "ap-mumbai", "ap-bangkok",
+        "na-siliconvalley", "na-ashburn", "na-toronto",
+        "eu-frankfurt", "eu-moscow",
+    ];
+    /**
+     * 调用 workbench API 获取 CVM 实例价格
+     */
+    async callWorkbenchApi(action, region, data) {
+        const res = await fetch(`https://workbench.cloud.tencent.com/cgi/api?i=${action}&uin=&region=${region}`, {
+            method: "POST",
+            headers: {
+                "accept": "*/*",
+                "content-type": "application/json; charset=UTF-8",
+                "x-csrfcode": "",
+                "x-intl": "false",
+                "x-life": Date.now().toString(),
+                "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36",
+            },
+            body: JSON.stringify({
+                serviceType: action.split("/")[0],
+                action: action.split("/")[1],
+                region,
+                data,
+                cgiName: "api",
+            }),
+        });
+        if (!res.ok)
+            return null;
+        return res.json();
+    }
+    /**
+     * 获取 CVM 全量价格数据
+     */
+    async fetchCvmPrices() {
+        const prices = [];
+        const allPrices = new Map();
+        // 并行查询所有地域
+        const regionPromises = this.CVM_REGIONS.map(async (region) => {
+            try {
+                const result = await this.callWorkbenchApi("cvm/DescribeZoneInstanceConfigInfos", region, {
+                    Filters: [
+                        { Name: "instance-charge-type", Values: ["PREPAID", "POSTPAID_BY_HOUR"] },
+                    ],
+                    Platform: "LINUX",
+                    Version: "2017-03-12",
+                });
+                if (!result?.data?.Response?.InstanceTypeQuotaSet)
+                    return;
+                for (const config of result.data.Response.InstanceTypeQuotaSet) {
+                    const key = `${config.InstanceType}_${config.InstanceChargeType}_${config.Zone}`;
+                    if (allPrices.has(key))
+                        continue;
+                    const price = config.Price || {};
+                    const instanceChargeType = config.InstanceChargeType;
+                    if (instanceChargeType === "PREPAID") {
+                        // 包年包月：按月、1年、3年、5年
+                        if (price.OriginalPrice > 0) {
+                            allPrices.set(key + "_1m", {
+                                productName: "云服务器 CVM",
+                                specification: `${config.TypeName} ${config.InstanceType} (${config.Cpu}核 ${config.Memory}GB)`,
+                                region: config.Zone,
+                                billingMode: "包年包月",
+                                price: price.OriginalPrice,
+                                unit: "元/月",
+                                currency: "CNY",
+                                source: "https://buy.cloud.tencent.com/price/cvm/overview",
+                            });
+                        }
+                        if (price.OriginalPriceOneYear > 0) {
+                            allPrices.set(key + "_1y", {
+                                productName: "云服务器 CVM",
+                                specification: `${config.TypeName} ${config.InstanceType} (${config.Cpu}核 ${config.Memory}GB)`,
+                                region: config.Zone,
+                                billingMode: "包年包月",
+                                price: price.DiscountPriceOneYear || price.OriginalPriceOneYear,
+                                unit: "元/年",
+                                currency: "CNY",
+                                note: price.DiscountOneYear < 100 ? `${price.DiscountOneYear}折` : undefined,
+                                source: "https://buy.cloud.tencent.com/price/cvm/overview",
+                            });
+                        }
+                    }
+                    else if (instanceChargeType === "POSTPAID_BY_HOUR") {
+                        // 按量付费
+                        if (price.UnitPrice > 0) {
+                            allPrices.set(key + "_hourly", {
+                                productName: "云服务器 CVM",
+                                specification: `${config.TypeName} ${config.InstanceType} (${config.Cpu}核 ${config.Memory}GB)`,
+                                region: config.Zone,
+                                billingMode: "按量",
+                                price: price.UnitPrice,
+                                unit: "元/小时",
+                                currency: "CNY",
+                                source: "https://buy.cloud.tencent.com/price/cvm/overview",
+                            });
+                        }
+                    }
+                }
+            }
+            catch {
+                // 单个地域失败不影响其他地域
+            }
+        });
+        await Promise.all(regionPromises);
+        // 添加到结果列表
+        for (const item of allPrices.values()) {
+            prices.push(item);
+        }
+        // 获取带宽价格
+        try {
+            const bwResult = await this.callWorkbenchApi("vpc/DescribeInternetChargePrices", "ap-guangzhou", {
+                Filters: [
+                    {
+                        Name: "internet-charge-type",
+                        Values: [
+                            "BANDWIDTH_PREPAID_BY_MONTH",
+                            "BANDWIDTH_POSTPAID_BY_HOUR",
+                            "TRAFFIC_POSTPAID_BY_HOUR",
+                            "BANDWIDTH_PACKAGE",
+                        ],
+                    },
+                ],
+                Version: "2017-03-12",
+            });
+            const bwSet = bwResult?.data?.Response?.InternetChargePriceSet || [];
+            for (const bw of bwSet) {
+                const chargeType = bw.ChargeType;
+                const priceType = bw.PriceType;
+                if (priceType === "linear" && bw.UnitPrice > 0) {
+                    prices.push({
+                        productName: "公网带宽",
+                        specification: chargeType,
+                        region: "ap-guangzhou",
+                        billingMode: chargeType.includes("PREPAID") ? "包年包月" : "按量",
+                        price: bw.UnitPrice,
+                        unit: chargeType.includes("HOUR") ? "元/小时" : "元/月",
+                        currency: "CNY",
+                        source: "https://buy.cloud.tencent.com/price/cvm/overview",
+                    });
+                }
+                else if (priceType === "ladder" && bw.LadderPriceSet) {
+                    for (const ladder of bw.LadderPriceSet) {
+                        prices.push({
+                            productName: "公网带宽",
+                            specification: `${chargeType} (${ladder.Start}-${ladder.End === -1 ? "∞" : ladder.End}Mbps)`,
+                            region: "ap-guangzhou",
+                            billingMode: chargeType.includes("PREPAID") ? "包年包月" : "按量",
+                            price: ladder.UnitPrice,
+                            unit: ladder.ChargeUnit === "HOUR" ? "元/小时" : "元/月",
+                            currency: "CNY",
+                            source: "https://buy.cloud.tencent.com/price/cvm/overview",
+                        });
+                    }
+                }
+            }
+        }
+        catch {
+            // 带宽价格获取失败不影响实例价格
+        }
+        return prices;
+    }
+    /**
+     * 获取其他产品的价格（通过计算器 API 或配置 API）
+     */
+    async fetchProductPrice(productId) {
+        // 目前使用回退方案
+        return [];
+    }
+    /**
+     * 回退方案：从文档页面解析价格
+     */
+    async fallbackParsePrice(productId) {
+        const sourceUrl = "https://buy.cloud.tencent.com/price";
+        const prices = [];
+        if (!productId) {
+            try {
+                const html = await this.fetchHtml(sourceUrl);
+                const md = htmlToMarkdown(html);
+                return this.parsePriceTableFromMd(md, sourceUrl);
+            }
+            catch {
+                return prices;
+            }
+        }
+        const urls = [
+            `${BASE_URL}/document/product/${productId}/billing`,
+            `https://buy.cloud.tencent.com/price/${productId}`,
+            `${BASE_URL}/document/product/${productId}`,
+        ];
+        for (const url of urls) {
+            try {
+                const html = await this.fetchHtml(url);
+                const md = htmlToMarkdown(html);
+                const result = this.parsePriceTableFromMd(md, url);
+                if (result.length > 0)
+                    return result;
+            }
+            catch {
+                continue;
+            }
+        }
+        return prices;
+    }
+    /**
      * 从 Markdown 文本中解析价格表格
      */
-    parsePriceTable(markdown, sourceUrl) {
+    parsePriceTableFromMd(markdown, sourceUrl) {
         const lines = markdown.split("\n");
         const prices = [];
         let inTable = false;
         let headers = [];
         for (let i = 0; i < lines.length; i++) {
             const line = lines[i].trim();
-            // 检测表格行（以 | 开头和结尾）
             if (line.startsWith("|") && line.endsWith("|")) {
                 const cells = line.split("|").map((c) => c.trim()).filter((c) => c !== "");
                 if (!inTable) {
-                    // 第一行是表头
                     headers = cells;
                     inTable = true;
                     continue;
                 }
-                // 跳过分隔行（所有单元格都是 ---）
                 if (cells.every((c) => /^-+\s*$/.test(c))) {
                     continue;
                 }
-                // 解析数据行
                 if (cells.length >= 2) {
                     const productName = cells[0] || "";
                     const lastCell = cells[cells.length - 1] || "";
-                    // 尝试从最后一列提取价格数字
                     const priceMatch = lastCell.match(/[\d,.]+/);
                     if (priceMatch) {
                         prices.push({
@@ -170,68 +484,5 @@ export class TencentAdapter extends CloudDocAdapter {
             }
         }
         return prices;
-    }
-    async getProductPrice(productId) {
-        const name = this.name;
-        const sourceUrl = "https://buy.cloud.tencent.com/price";
-        if (!productId) {
-            // 无 productId，尝试获取通用定价页面
-            try {
-                const html = await this.fetchHtml(sourceUrl);
-                const md = htmlToMarkdown(html);
-                const prices = this.parsePriceTable(md, sourceUrl);
-                return {
-                    provider: this.provider,
-                    name,
-                    prices,
-                    source: sourceUrl,
-                };
-            }
-            catch {
-                return {
-                    provider: this.provider,
-                    name,
-                    prices: [],
-                    source: sourceUrl,
-                };
-            }
-        }
-        // 有 productId，依次尝试多个可能的定价页面
-        const urls = [
-            `${BASE_URL}/document/product/${productId}/billing`,
-            `https://buy.cloud.tencent.com/price/${productId}`,
-            `${BASE_URL}/document/product/${productId}`,
-        ];
-        for (const url of urls) {
-            try {
-                const html = await this.fetchHtml(url);
-                const md = htmlToMarkdown(html);
-                const prices = this.parsePriceTable(md, url);
-                if (prices.length > 0) {
-                    // 尝试从页面提取更新时间
-                    let updateDate;
-                    const updateMatch = md.match(/(?:更新|发布|修改)(?:时间|日期)[：:]\s*([\d-]+)/);
-                    if (updateMatch) {
-                        updateDate = updateMatch[1];
-                    }
-                    return {
-                        provider: this.provider,
-                        name,
-                        prices,
-                        source: url,
-                        updateDate,
-                    };
-                }
-            }
-            catch {
-                continue;
-            }
-        }
-        return {
-            provider: this.provider,
-            name,
-            prices: [],
-            source: sourceUrl,
-        };
     }
 }

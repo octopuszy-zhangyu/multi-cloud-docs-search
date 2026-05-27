@@ -63,6 +63,76 @@ const server = new McpServer(
 - **腾讯云云桌面**：文档未公开具体价格，需官网价格计算器
 - **天翼云云电脑价格**：get_product_price({ provider: "ctyun", productId: "10027004" }) 可获取完整价格表
 
+## 腾讯云大模型 Token 价格速查
+
+当用户询问腾讯云大模型 Token 价格时，直接使用以下已知的文档页面获取价格信息（无需搜索目录）：
+
+| 价格类型 | 文档 URL | 说明 |
+|---------|---------|------|
+| 模型价格（按需） | https://cloud.tencent.com/document/product/1823/130055 | 各模型按量计费单价 |
+| Token Plan 企业版专业套餐 | https://cloud.tencent.com/document/product/1823/130659 | 企业版专业套餐价格 |
+| Token Plan 企业版轻享套餐 | https://cloud.tencent.com/document/product/1823/131173 | 企业版轻享套餐价格 |
+| Token Plan 个人版 | https://cloud.tencent.com/document/product/1823/130060 | 个人版套餐价格 |
+
+获取方式：直接调用 get_page_metadata({ provider: "tencent", pageId: "1823/130055" }) → get_page_content 即可获取完整价格表。所有 Token 价格页面可并行获取。
+
+## 火山引擎大模型 Token 价格速查
+
+当用户询问火山引擎（火山方舟/豆包）大模型 Token 价格时，直接使用以下页面：
+
+| 价格类型 | 文档 URL | 说明 |
+|---------|---------|------|
+| 模型价格（按需） | https://www.volcengine.com/docs/82379/1544106 | 各模型按量计费单价（含 doubao、DeepSeek 等） |
+| 定价详情页 | https://www.volcengine.com/pricing?product=ark_bd&tab=1 | 价格计算器（含资源包） |
+
+获取方式：调用 get_page_metadata({ provider: "volcengine", pageId: "82379/1544106" }) → get_page_content 获取模型价格表。火山方舟的 Agent Plan / Coding Plan（套餐概览）页面为 pageId: "82379/2366394"，可通过 get_page_metadata → get_page_content 获取套餐详情（含 Small/Medium/Large/Max 四档套餐价格）。
+
+## 华为云大模型 Token 价格速查
+
+当用户询问华为云 MaaS（模型即服务）Token 价格时，直接使用以下方式：
+
+| 价格类型 | 获取方式 | 说明 |
+|---------|---------|------|
+| 模型价格（按需） | get_product_price({ provider: "huawei", productId: "maas" }) | 返回所有模型的输入/输出 Token 单价 |
+| Token Plan（套餐） | https://support.huaweicloud.com/price-maas/price-maas-0002.html | 套餐包价格详情 |
+
+获取方式：按需价格直接调用 get_product_price 获取；套餐价格通过 get_page_metadata({ provider: "huawei", pageId: "maas/price-maas/price-maas-0002" }) → get_page_content 获取套餐详情页面。
+
+## 移动云大模型 Token 价格速查
+
+当用户询问移动云 MoMA（模型服务平台）Token 价格时，直接使用以下页面：
+
+| 价格类型 | 文档 URL | 说明 |
+|---------|---------|------|
+| 预置模型服务-token按量计费 | https://ecloud.10086.cn/op-help-center/doc/article/91592 | 预置模型 Token 按量价格 |
+| 预置模型服务-一次性资源包 | https://ecloud.10086.cn/op-help-center/doc/article/95323 | 预置模型资源包价格 |
+| 合作模型服务-token按量计费 | https://ecloud.10086.cn/op-help-center/doc/article/99427 | 合作模型 Token 按量价格 |
+| Coding Plan个人版价格 | https://ecloud.10086.cn/op-help-center/doc/article/98320 | Coding Plan 套餐价格 |
+
+获取方式：直接调用 get_page_metadata({ provider: "ecloud", pageId: "91592" }) → get_page_content 获取 Token 价格表。所有 Token 价格页面可并行获取。
+
+## 百度云千帆大模型 Token 价格速查
+
+当用户询问百度云千帆大模型 Token 价格时，直接使用以下页面：
+
+| 价格类型 | 文档 URL | 说明 |
+|---------|---------|------|
+| Token 计费说明 | https://cloud.baidu.com/doc/qianfan/s/wmh4sv6ya | 千帆大模型 Token 按量计费价格 |
+| Token 福利包 | https://cloud.baidu.com/doc/qianfan/s/Smoghsq3g | Token 福利包套餐价格 |
+
+获取方式：直接调用 get_page_metadata({ provider: "baidu", pageId: "qianfan/s/wmh4sv6ya" }) → get_page_content 获取 Token 价格表。所有 Token 价格页面可并行获取。
+
+## 智谱 GLM 大模型 Token 价格速查
+
+当用户询问智谱 GLM Token 价格时，直接使用以下方式：
+
+| 价格类型 | 获取方式 | 说明 |
+|---------|---------|------|
+| 模型按量价格 | https://bigmodel.cn/pricing | 各模型按量计费单价（含 GLM-4 系列、GLM-4V 等） |
+| GLM Coding Plan | https://bigmodel.cn/glm-coding | Coding Plan 套餐（Lite/Pro/Max）价格 |
+
+获取方式：按量价格通过 get_page_metadata({ provider: "glm", pageId: "/cn/guide/start/quick-start" }) → get_page_content 获取文档中的价格信息。Coding Plan 套餐详情通过 get_page_metadata({ provider: "glm", pageId: "/cn/coding-plan/overview" }) → get_page_content 获取。
+
 ## 当前支持的云厂商
 
 - ctyun - 天翼云

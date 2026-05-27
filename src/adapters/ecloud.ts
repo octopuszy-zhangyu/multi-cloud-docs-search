@@ -294,6 +294,11 @@ export class EcloudAdapter extends CloudDocAdapter {
     return htmlToMarkdown(contentHtml);
   }
 
+  /**
+   * 从 Markdown 文本中解析价格表格
+   * 移动云价格表格格式：
+   * | 主机类型 | 规格名称 | vCPU | 内存 | ... | 按量（元/小时） | 包月（元/月） | 包年（元/年） |
+   */
   private parsePriceTable(markdown: string, source: string): PriceItem[] {
     const lines = markdown.split("\n");
     const prices: PriceItem[] = [];
@@ -303,66 +308,83 @@ export class EcloudAdapter extends CloudDocAdapter {
     for (let i = 0; i < lines.length; i++) {
       const line = lines[i].trim();
 
-      // Detect table start: line starts and ends with |
       if (line.startsWith("|") && line.endsWith("|")) {
-        const cells = line.split("|").filter((c) => c.trim().length > 0).map((c) => c.trim());
+        const cells = line.split("|").slice(1, -1).map((c) => c.trim());
+        while (cells.length > 0 && cells[0] === "") cells.shift();
+        while (cells.length > 0 && cells[cells.length - 1] === "") cells.pop();
 
         if (!inTable) {
           inTable = true;
           headers = cells;
-          // Skip header row and separator row (next line)
-          i++;
-          if (i < lines.length && lines[i].trim().match(/^[\s|:-]+$/)) {
-            i++;
-          }
           continue;
         }
 
-        // Skip separator row
-        if (line.match(/^[\s|:-]+$/)) {
+        if (cells.every((c) => /^-+\s*$/.test(c))) {
           continue;
         }
 
-        // Parse data row
-        if (cells.length >= 2) {
-          const productName = cells[0];
-          // Try to find a numeric price in the last cell
-          const lastCell = cells[cells.length - 1];
-          const priceMatch = lastCell.match(/(\d+(?:\.\d+)?)/);
-          const price = priceMatch ? parseFloat(priceMatch[1]) : 0;
+        if (cells.length < 2) continue;
 
-          // Determine billing mode from headers or cell content
-          let billingMode = "按量计费";
-          const billingHeader = headers.find((h) => h.includes("计费") || h.includes("方式") || h.includes("模式"));
-          if (billingHeader) {
-            const billingIdx = headers.indexOf(billingHeader);
-            if (billingIdx < cells.length) {
-              billingMode = cells[billingIdx];
-            }
+        // 跳过纯数字行（vCPU 行）
+        if (/^\d+$/.test(cells[0]) && cells.length < 3) continue;
+
+        // 确定规格名称：查找包含点号或字母开头的列
+        let specName = "";
+        let specIdx = -1;
+        for (let j = 0; j < cells.length; j++) {
+          if (cells[j].includes(".") || /^[a-z]/i.test(cells[j])) {
+            specName = cells[j];
+            specIdx = j;
+            break;
           }
+        }
+        if (!specName) continue;
 
-          // Determine specification from second column
-          const specification = cells.length >= 2 ? cells.slice(1, -1).join(" ") : cells[0];
+        // 计算列偏移：headers 中规格名称的位置 vs cells 中规格名称的位置
+        const headerSpecIdx = headers.findIndex(h => h.includes("规格") || h.includes("实例规格"));
+        const offset = headerSpecIdx >= 0 ? specIdx - headerSpecIdx : 0;
 
-          // Determine unit from headers
-          let unit = "小时";
-          const unitHeader = headers.find((h) => h.includes("单位") || h.includes("周期"));
-          if (unitHeader) {
-            const unitIdx = headers.indexOf(unitHeader);
-            if (unitIdx < cells.length) {
-              unit = cells[unitIdx];
-            }
+        // 查找按量、包月、包年价格列
+        for (let j = 0; j < headers.length; j++) {
+          const cellIdx = j + offset;
+          if (cellIdx < 0 || cellIdx >= cells.length) continue;
+
+          const val = cells[cellIdx].replace(/,/g, "");
+          const price = parseFloat(val);
+          if (isNaN(price) || price <= 0) continue;
+
+          const h = headers[j];
+          if (h.includes("按量")) {
+            prices.push({
+              productName: specName,
+              specification: specName,
+              billingMode: "按量",
+              price,
+              unit: "元/小时",
+              currency: "CNY",
+              source,
+            });
+          } else if (h.includes("包月")) {
+            prices.push({
+              productName: specName,
+              specification: specName,
+              billingMode: "包年包月",
+              price,
+              unit: "元/月",
+              currency: "CNY",
+              source,
+            });
+          } else if (h.includes("包年")) {
+            prices.push({
+              productName: specName,
+              specification: specName,
+              billingMode: "包年包月",
+              price,
+              unit: "元/年",
+              currency: "CNY",
+              source,
+            });
           }
-
-          prices.push({
-            productName,
-            specification,
-            billingMode,
-            price,
-            unit,
-            currency: "CNY",
-            source,
-          });
         }
       } else {
         inTable = false;
@@ -386,26 +408,40 @@ export class EcloudAdapter extends CloudDocAdapter {
     }
 
     try {
-      // Try to fetch pricing documentation page
-      // Common pricing page patterns for ecloud
-      const priceUrls = [
-        `${HELP_CENTER_URL}/doc/category/${productId}`,
-        `${BASE_URL}/op-help-center/doc/category/${productId}`,
-      ];
+      // 获取产品的文档目录，查找价格相关页面
+      const toc = await this.getDocumentToc(productId);
 
-      for (const url of priceUrls) {
+      // 查找包含"价格"、"计费"、"定价"或"云主机"的页面
+      const pricePages = toc.filter(item =>
+        item.title.includes("价格") ||
+        item.title.includes("计费") ||
+        item.title.includes("定价") ||
+        item.title.includes("价格总览") ||
+        item.title.includes("云主机")
+      );
+
+      // 如果没有找到，尝试已知的价格页面 ID
+      const knownPricePages = pricePages.length > 0
+        ? pricePages
+        : [{ pageId: "41800", title: "通用型云主机" }]; // 已知的通用型云主机价格页面
+
+      const pagesToFetch = knownPricePages.slice(0, 5);
+
+      for (const page of pagesToFetch) {
         try {
-          const html = await this.fetchHtml(url);
-          const markdown = htmlToMarkdown(html);
-          const prices = this.parsePriceTable(markdown, url);
+          const meta = await this.getPageMetadata(page.pageId);
+          const content = await this.getPageContent(meta.contentPath);
+          const prices = this.parsePriceTable(content, meta.contentPath);
           if (prices.length > 0) {
-            result.prices = prices;
-            result.source = url;
-            break;
+            result.prices.push(...prices);
           }
         } catch {
           continue;
         }
+      }
+
+      if (result.prices.length > 0) {
+        result.source = `${HELP_CENTER_URL}/doc/category/${productId}`;
       }
     } catch {
       // Return empty prices if unable to fetch

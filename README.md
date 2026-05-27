@@ -67,6 +67,34 @@ npm config set registry https://registry.npmmirror.com/
 | minimax | MiniMax | 已实现 |
 | kimi | 月之暗面 Kimi | 已实现 |
 
+## 价格获取
+
+`get_product_price` 工具支持获取云厂商产品价格信息。各厂商实现方式：
+
+| 厂商 | 实现方式 | 说明 |
+|------|---------|------|
+| 火山引擎 | GetTable API | 通过 SSR 定价页面获取 TemplateCode，调用 GetTable API 获取完整定价表格 |
+| 腾讯云 | DescribeZoneInstanceConfigInfos API | 并行查询 18 个地域的 CVM 实例配置和价格 |
+| 华为云 | export/productlist API | 通过价格计算器 API 获取全量价格数据（支持 100+ 产品） |
+| 移动云 | 文档 API 解析 | 从文档 Markdown 表格中解析价格数据 |
+| 天翼云 | 文档 API | 通过文档 API 获取价格信息 |
+| 阿里云百炼 | 文档 API | 通过文档 API 获取价格信息 |
+| DeepSeek | 文档页面 | 从定价文档页面提取价格 |
+| MiniMax | 文档页面 | 从定价文档页面提取价格 |
+
+### 大模型 Token 价格速查
+
+MCP Server 内置了各厂商大模型 Token 价格的快速获取指引，AI 客户端连接后会自动获取。支持的厂商和价格类型：
+
+| 厂商 | 价格类型 |
+|------|---------|
+| 腾讯云 TokenHub | 模型按需价格、Token Plan 企业版专业套餐、Token Plan 企业版轻享套餐、Token Plan 个人版 |
+| 火山引擎方舟 | 模型按需价格、Agent Plan / Coding Plan 套餐 |
+| 华为云 MaaS | 模型按需价格、Token Plan 套餐 |
+| 移动云 MoMA | 预置模型 Token 按量、一次性资源包、合作模型 Token 按量、Coding Plan 个人版 |
+| 百度千帆 | Token 计费说明、Token 福利包 |
+| 智谱 GLM | 模型按需价格、GLM Coding Plan |
+
 ## 使用指引
 
 MCP Server 内置了完整的使用指引（instructions），AI 客户端连接后会自动获取。核心原则：

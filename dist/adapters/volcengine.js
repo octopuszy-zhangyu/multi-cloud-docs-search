@@ -111,127 +111,86 @@ export class VolcengineAdapter extends CloudDocAdapter {
         return doc.MDContent || doc.Content || "";
     }
     /**
-     * 从 Markdown 文本中解析价格表格
+     * 获取火山引擎产品价格
+     *
+     * 实现方式：
+     * 1. 访问 SSR 定价页面（productId → 产品代码映射）获取 TemplateCode
+     * 2. 调用 GetTable API 获取完整定价表格（含所有价格数据）
+     * 3. 按 Product 字段过滤，解析价格数据
+     *
+     * 火山引擎定价 API（均可匿名调用，只需基本 cookie）：
+     * - GetTable: POST /anonymous-api/trade/price?Action=GetTable&Version=2020-01-01
+     *   返回完整定价表格，每行包含 Product、ConfigurationCode、ChargeItemCode、PriceInfoList
      */
-    parsePriceTable(markdown) {
-        const prices = [];
-        const lines = markdown.split("\n");
-        let inTable = false;
-        for (const line of lines) {
-            const trimmed = line.trim();
-            if (trimmed.startsWith("|") && trimmed.endsWith("|")) {
-                const cells = trimmed.split("|").map((c) => c.trim()).filter(Boolean);
-                if (!inTable) {
-                    inTable = true;
-                    continue;
-                }
-                // 跳过分隔行 (如 |---|---|)
-                if (cells.every((c) => /^[-:\s]+$/.test(c))) {
-                    continue;
-                }
-                if (cells.length >= 2) {
-                    const productName = cells[0] || "";
-                    const lastCell = cells[cells.length - 1] || "";
-                    // 尝试从最后一个单元格提取价格
-                    const priceMatch = lastCell.match(/([0-9.]+)\s*(元|\$|美元|USD|CNY|\/)/i);
-                    let price = 0;
-                    if (priceMatch) {
-                        price = parseFloat(priceMatch[1]);
-                    }
-                    else {
-                        // 尝试直接解析数字
-                        const directPrice = parseFloat(lastCell.replace(/[^0-9.]/g, ""));
-                        if (!isNaN(directPrice)) {
-                            price = directPrice;
-                        }
-                    }
-                    const spec = cells.length > 2 ? cells.slice(1, -1).join(" / ") : "";
-                    // 尝试检测货币单位
-                    let currency = "CNY";
-                    let unit = "";
-                    if (lastCell.includes("$") || lastCell.includes("USD") || lastCell.includes("美元")) {
-                        currency = "USD";
-                    }
-                    // 尝试提取单位
-                    const unitMatch = lastCell.match(/\/(年|月|日|小时|Token|请求|GB|MB|次)/);
-                    if (unitMatch) {
-                        unit = unitMatch[0];
-                    }
-                    if (!isNaN(price) && price > 0) {
-                        prices.push({
-                            productName,
-                            specification: spec,
-                            billingMode: "按量",
-                            price,
-                            unit: unit || "元",
-                            currency,
-                            source: "火山引擎定价文档",
-                        });
-                    }
-                }
-                continue;
-            }
-            if (inTable && trimmed !== "") {
-                inTable = false;
-            }
-        }
-        return prices;
-    }
     async getProductPrice(productId) {
         let prices = [];
-        let source = `${BASE_URL}/docs`;
+        let source = `${BASE_URL}/pricing`;
         try {
-            if (productId) {
-                // 尝试获取产品的文档目录，查找定价相关页面
-                const toc = await this.getDocumentToc(productId);
-                // 递归搜索包含"价格"或"定价"的文档
-                const findPricingDocs = (items) => {
-                    const results = [];
-                    for (const item of items) {
-                        if (item.title.includes("价格") || item.title.includes("定价") || item.title.includes("计费")) {
-                            results.push(item);
+            // 1. 确定要查询的产品代码列表
+            const productCodes = this.resolveProductCodes(productId);
+            // 2. 遍历每个产品代码，获取定价数据
+            for (const productCode of productCodes) {
+                const templateCode = await this.getTemplateCode(productCode);
+                if (!templateCode)
+                    continue;
+                // 3. 调用 GetTable API 获取定价表格
+                const tableRes = await fetch(`${BASE_URL}/anonymous-api/trade/price?Action=GetTable&Version=2020-01-01`, {
+                    method: "POST",
+                    headers: {
+                        "Content-Type": "application/json",
+                        "Accept": "application/json",
+                        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36",
+                    },
+                    body: JSON.stringify({ TemplateCode: templateCode }),
+                });
+                if (!tableRes.ok)
+                    continue;
+                const tableData = await tableRes.json();
+                const tableList = tableData?.Result?.TableList || [];
+                // 4. 解析定价表格
+                for (const table of tableList) {
+                    const rows = table.Rows || [];
+                    for (const row of rows) {
+                        const productName = row.Product || "";
+                        const configCode = row.ConfigurationCode || "";
+                        const chargeItemCode = row.ChargeItemCode || "";
+                        const priceInfoList = row.PriceInfoList || [];
+                        // 如果指定了 productId，只返回匹配产品的价格
+                        if (productId && !productName.toLowerCase().includes(productId.toLowerCase())) {
+                            continue;
                         }
-                        if (item.children) {
-                            results.push(...findPricingDocs(item.children));
+                        for (const pi of priceInfoList) {
+                            const period = pi.Period || "";
+                            const price = parseFloat(pi.Price) || 0;
+                            const times = pi.Times || 1;
+                            if (price <= 0)
+                                continue;
+                            // 从 ChargeItemCode 提取地域信息
+                            const regionMatch = chargeItemCode.match(/_([a-z]{2}-[a-z]+-\d)$/);
+                            const region = regionMatch ? regionMatch[1] : undefined;
+                            // 从 ConfigurationCode 提取可读规格
+                            const spec = this.parseConfigCode(configCode);
+                            // 确定计费单位和模式
+                            const { unit, billingMode } = this.parsePeriod(period, times);
+                            prices.push({
+                                productName,
+                                specification: spec || chargeItemCode,
+                                region,
+                                billingMode,
+                                price,
+                                unit,
+                                currency: "CNY",
+                                source: `${BASE_URL}/pricing?product=${encodeURIComponent(productName)}`,
+                            });
                         }
                     }
-                    return results;
-                };
-                const pricingDocs = findPricingDocs(toc);
-                // 获取定价文档内容
-                for (const doc of pricingDocs.slice(0, 3)) { // 最多处理3个定价文档
-                    const content = await this.getPageContent(doc.pageId);
-                    const docPrices = this.parsePriceTable(content);
-                    prices.push(...docPrices);
-                }
-                if (pricingDocs.length > 0) {
-                    source = `${BASE_URL}/docs/${productId}`;
                 }
             }
-            // 如果没有找到特定产品的定价，尝试获取通用定价信息
-            if (prices.length === 0) {
-                // 尝试获取产品列表，找到定价相关的库
-                const products = await this.listProducts();
-                // 查找定价相关产品
-                const pricingProducts = products.filter((p) => p.name.includes("价格") ||
-                    p.name.includes("定价") ||
-                    p.name.includes("计费") ||
-                    p.name.includes("Billing"));
-                for (const product of pricingProducts.slice(0, 2)) {
-                    const toc = await this.getDocumentToc(product.productId);
-                    for (const item of toc.slice(0, 5)) {
-                        const content = await this.getPageContent(item.pageId);
-                        const docPrices = this.parsePriceTable(content);
-                        prices.push(...docPrices);
-                    }
-                }
-                if (pricingProducts.length > 0) {
-                    source = `${BASE_URL}/docs/${pricingProducts[0].productId}`;
-                }
+            if (prices.length > 0) {
+                source = `${BASE_URL}/pricing`;
             }
         }
         catch (error) {
-            // 出错时返回空价格列表，不抛出异常
             console.error("获取火山引擎价格信息失败:", error);
         }
         return {
@@ -241,5 +200,123 @@ export class VolcengineAdapter extends CloudDocAdapter {
             source,
             updateDate: undefined,
         };
+    }
+    /**
+     * 火山引擎产品代码到定价页面产品代码的映射
+     * productId（如文档中的 LibraryID）→ 定价页面的 product 参数值
+     */
+    PRODUCT_CODE_MAP = {
+        "6396": "ECS",
+        "86681": "TOS",
+        "6349": "TOS",
+        "rds": "RDS for MySQL",
+        "mysql": "RDS for MySQL",
+        "ecs": "ECS",
+        "tos": "TOS",
+        "ecs_baremetal": "ECS_BareMetal",
+        "gpu": "GPU_Server",
+        "hpc_gpu": "HPC_GPU",
+        "volume": "volume",
+        "ims": "IMS",
+    };
+    /**
+     * 解析 productId 为定价页面的产品代码列表
+     * 无 productId 时返回常见产品
+     */
+    resolveProductCodes(productId) {
+        if (!productId) {
+            // 默认查询热门产品
+            return ["ECS", "TOS", "RDS for MySQL"];
+        }
+        const lower = productId.toLowerCase();
+        // 检查是否有直接映射
+        if (this.PRODUCT_CODE_MAP[lower]) {
+            return [this.PRODUCT_CODE_MAP[lower]];
+        }
+        // 尝试模糊匹配
+        if (lower.includes("ecs") || lower.includes("cvm") || lower.includes("云服务器") || lower.includes("弹性")) {
+            return ["ECS"];
+        }
+        if (lower.includes("tos") || lower.includes("对象存储") || lower.includes("oss") || lower.includes("存储")) {
+            return ["TOS"];
+        }
+        if (lower.includes("rds") || lower.includes("mysql") || lower.includes("数据库") || lower.includes("数据库")) {
+            return ["RDS for MySQL"];
+        }
+        if (lower.includes("gpu") || lower.includes("gpu")) {
+            return ["GPU_Server"];
+        }
+        if (lower.includes("volume") || lower.includes("云盘") || lower.includes("磁盘")) {
+            return ["volume"];
+        }
+        // 无法匹配，直接使用 productId 作为产品代码
+        return [productId];
+    }
+    /**
+     * 从 SSR 定价页面获取 TemplateCode
+     */
+    async getTemplateCode(productCode) {
+        const ssrUrl = `${BASE_URL}/pricing?product=${encodeURIComponent(productCode)}&tab=1&__loader=${encodeURIComponent("__ssr_without_user/pricing/page")}&__ssrDirect=true`;
+        const ssrRes = await fetch(ssrUrl, {
+            headers: {
+                "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36",
+                "Accept": "application/json",
+            },
+        });
+        if (!ssrRes.ok)
+            return null;
+        const ssrData = await ssrRes.json();
+        const activeProductInfo = ssrData?.activeProductInfo;
+        if (typeof activeProductInfo === "object") {
+            return activeProductInfo?.TemplateInfoList?.[0]?.TemplateCode || null;
+        }
+        return null;
+    }
+    /**
+     * 解析配置编码为可读的规格描述
+     */
+    parseConfigCode(configCode) {
+        if (!configCode)
+            return "";
+        // ECS: ecs.g3i.large.month → g3i.large
+        const ecsMatch = configCode.match(/^ecs\.(.+?)\.(month|hourly|year)$/);
+        if (ecsMatch)
+            return ecsMatch[1];
+        // RDS: rds.mysql.d1.n_monthly → mysql d1.n
+        const rdsMatch = configCode.match(/^rds\.(.+?)\.(.+?)_(monthly|hourly)$/);
+        if (rdsMatch)
+            return `${rdsMatch[1]} ${rdsMatch[2]}`;
+        // volume: system-EBS_ESSD_PL0.month → EBS_ESSD_PL0
+        const volMatch = configCode.match(/^system-(.+?)\.(month|hourly)$/);
+        if (volMatch)
+            return volMatch[1];
+        // IMS: SUSE.month → SUSE
+        const imsMatch = configCode.match(/^(.+?)\.(month|hourly)$/);
+        if (imsMatch)
+            return imsMatch[1];
+        return configCode;
+    }
+    /**
+     * 解析计费周期和次数为可读的计费单位和模式
+     */
+    parsePeriod(period, times) {
+        switch (period) {
+            case "hourly":
+                return { unit: "元/小时", billingMode: "按量" };
+            case "monthly":
+                if (times === 1)
+                    return { unit: "元/月", billingMode: "包年包月" };
+                if (times === 12)
+                    return { unit: `元/${times}个月`, billingMode: "包年包月" };
+                if (times === 24)
+                    return { unit: `元/${times}个月`, billingMode: "包年包月" };
+                if (times === 36)
+                    return { unit: `元/${times}个月`, billingMode: "包年包月" };
+                return { unit: `元/${times}个月`, billingMode: "包年包月" };
+            case "year":
+                return { unit: `元/${times}年`, billingMode: "包年包月" };
+            default:
+                return { unit: "元", billingMode: period };
+        }
     }
 }
