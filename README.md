@@ -90,7 +90,7 @@
   "mcpServers": {
     "multi-cloud-docs-search": {
       "command": "npx",
-      "args": ["git+https://gitee.com/你的用户名/multi-cloud-docs-search.git"]
+      "args": ["git+https://gitee.com/octopuszy-zhangyu/multi-cloud-docs-search.git"]
     }
   }
 }
