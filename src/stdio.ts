@@ -99,6 +99,22 @@ server.registerTool(
 );
 
 server.registerTool(
+  "get_product_price",
+  {
+    description: "获取指定云厂商的产品价格信息。不传 productId 则返回所有产品价格概览",
+    inputSchema: z.object({
+      provider: z.string().describe("云厂商标识"),
+      productId: z.string().optional().describe("产品 ID（可选，不传则返回所有产品价格概览）"),
+    }).strict(),
+  },
+  async ({ provider, productId }: { provider: string; productId?: string }) => {
+    const adapter = getAdapter(provider);
+    const result = await adapter.getProductPrice(productId);
+    return { content: [{ type: "text", text: JSON.stringify(result, null, 2) }] };
+  }
+);
+
+server.registerTool(
   "get_page_content",
   {
     description: "获取文档页面的完整 Markdown 正文。参数 contentPath 来自 get_page_metadata 返回的 contentPath",

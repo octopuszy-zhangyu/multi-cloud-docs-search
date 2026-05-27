@@ -46,6 +46,7 @@ src/
 | `search_documents` | provider, productId, keyword | 搜索文档 |
 | `get_page_metadata` | provider, pageId | 获取页面元信息 |
 | `get_page_content` | provider, contentPath | 获取 Markdown 正文 |
+| `get_product_price` | provider, productId? | 获取产品价格信息 |
 
 ## 当前支持的云厂商
 
@@ -89,6 +90,40 @@ npm run build    # TypeScript 编译检查
 | 对象存储 EOS（移动云） | 729 |
 | 云服务器 ECS（联通云） | 128 |
 | AI服务平台 AISP（联通云） | 2357 |
+| Token服务（天翼云） | 11061839 |
+| 大模型服务平台百炼（阿里云） | model-studio |
+| 大模型服务平台 TokenHub（腾讯云） | 1823 |
+| MaaS 模型即服务（华为云） | maas |
+| 模型服务平台 MoMA（移动云） | 1456 |
+| AI算力平台 AICP（联通云） | 1398 |
+| BML 全功能AI开发平台（百度云） | BML |
+
+## 价格获取说明
+
+`get_product_price` 工具用于获取云厂商产品价格信息。工作流程：
+
+1. **优先从文档获取价格**：先调用 `search_documents` 搜索"价格"/"计费"/"定价"关键词，找到定价页面后调用 `get_page_content` 获取内容，从中提取价格表
+2. **回退到 `get_product_price`**：当文档中找不到价格信息时，调用 `get_product_price` 获取价格数据
+3. **AI 厂商价格**：DeepSeek、MiniMax、Kimi 等 AI 厂商的定价页面可直接通过 `get_product_price` 获取
+4. **传统云厂商价格**：天翼云、阿里云（百炼）可通过 `get_product_price` 获取部分产品价格；火山引擎、腾讯云、华为云、移动云、联通云、百度云的 AI 产品价格需从文档中搜索获取
+
+### 价格获取策略
+
+| 厂商 | 文档价格 | get_product_price |
+|------|---------|-------------------|
+| deepseek | `/quick_start/pricing` | ✅ 可用 |
+| minimax | `/docs/guides/pricing-paygo` | ✅ 可用 |
+| kimi | `/docs/pricing` | ⚠️ 待确认路径 |
+| bailian | `/zh/model-studio/billing` | ✅ 可用 |
+| glm | `open.bigmodel.cn/pricing` | ⚠️ SPA 页面 |
+| ctyun | 文档计费说明 | ✅ 可用（需 productId） |
+| aliyun | 文档计费说明 | ✅ 可用（需 productId） |
+| volcengine | 文档计费规则 | ⚠️ 无具体单价 |
+| tencent | 文档计费说明 | ⚠️ 需价格计算器 |
+| huawei | 文档计费说明 | ⚠️ 需价格计算器 |
+| ecloud | 文档价格页面 | ⚠️ 待完善 |
+| cucloud | 文档价格页面 | ⚠️ 待完善 |
+| baidu | 产品页内嵌数据 | ⚠️ 待完善 |
 
 ## 注意事项
 
@@ -151,8 +186,21 @@ get_page_metadata({ provider: "huawei", pageId: "ecs/productdesc-ecs/zh-cn_topic
 get_page_content({ provider: "huawei", contentPath: "https://support.huaweicloud.com/productdesc-ecs/zh-cn_topic_0013771112.html" })
 ```
 
+### 价格获取验证
+
+```bash
+# AI 厂商价格
+get_product_price({ provider: "deepseek" })
+get_product_price({ provider: "minimax" })
+get_product_price({ provider: "bailian" })
+
+# 传统云厂商价格（需指定 productId）
+get_product_price({ provider: "ctyun", productId: "11061839" })
+get_product_price({ provider: "aliyun", productId: "model-studio" })
+```
+
 ### 验证原则
 - 每次代码变更后必须执行完整测试流程
-- 所有 5 个工具都必须返回正确结果
+- 所有 6 个工具都必须返回正确结果
 - 检查返回数据格式是否符合预期
 - 确保新增云厂商适配器后测试覆盖所有工具

@@ -1,5 +1,4 @@
-import * as cheerio from "cheerio";
-import { CloudDocAdapter, type Product, type TocItem, type SearchResult, type PageMetadata } from "./base.js";
+import { CloudDocAdapter, type Product, type TocItem, type SearchResult, type PageMetadata, type PriceItem, type PriceResult } from "./base.js";
 
 const BASE_URL = "https://www.volcengine.com";
 
@@ -200,5 +199,161 @@ export class VolcengineAdapter extends CloudDocAdapter {
     const doc = raw.Result;
     // 返回 Markdown 内容
     return doc.MDContent || doc.Content || "";
+  }
+
+  /**
+   * 从 Markdown 文本中解析价格表格
+   */
+  private parsePriceTable(markdown: string): PriceItem[] {
+    const prices: PriceItem[] = [];
+    const lines = markdown.split("\n");
+    let inTable = false;
+
+    for (const line of lines) {
+      const trimmed = line.trim();
+      if (trimmed.startsWith("|") && trimmed.endsWith("|")) {
+        const cells = trimmed.split("|").map((c) => c.trim()).filter(Boolean);
+
+        if (!inTable) {
+          inTable = true;
+          continue;
+        }
+
+        // 跳过分隔行 (如 |---|---|)
+        if (cells.every((c) => /^[-:\s]+$/.test(c))) {
+          continue;
+        }
+
+        if (cells.length >= 2) {
+          const productName = cells[0] || "";
+          const lastCell = cells[cells.length - 1] || "";
+
+          // 尝试从最后一个单元格提取价格
+          const priceMatch = lastCell.match(/([0-9.]+)\s*(元|\$|美元|USD|CNY|\/)/i);
+          let price = 0;
+          if (priceMatch) {
+            price = parseFloat(priceMatch[1]);
+          } else {
+            // 尝试直接解析数字
+            const directPrice = parseFloat(lastCell.replace(/[^0-9.]/g, ""));
+            if (!isNaN(directPrice)) {
+              price = directPrice;
+            }
+          }
+
+          const spec = cells.length > 2 ? cells.slice(1, -1).join(" / ") : "";
+
+          // 尝试检测货币单位
+          let currency = "CNY";
+          let unit = "";
+          if (lastCell.includes("$") || lastCell.includes("USD") || lastCell.includes("美元")) {
+            currency = "USD";
+          }
+
+          // 尝试提取单位
+          const unitMatch = lastCell.match(/\/(年|月|日|小时|Token|请求|GB|MB|次)/);
+          if (unitMatch) {
+            unit = unitMatch[0];
+          }
+
+          if (!isNaN(price) && price > 0) {
+            prices.push({
+              productName,
+              specification: spec,
+              billingMode: "按量",
+              price,
+              unit: unit || "元",
+              currency,
+              source: "火山引擎定价文档",
+            });
+          }
+        }
+        continue;
+      }
+
+      if (inTable && trimmed !== "") {
+        inTable = false;
+      }
+    }
+
+    return prices;
+  }
+
+  async getProductPrice(productId?: string): Promise<PriceResult> {
+    let prices: PriceItem[] = [];
+    let source = `${BASE_URL}/docs`;
+
+    try {
+      if (productId) {
+        // 尝试获取产品的文档目录，查找定价相关页面
+        const toc = await this.getDocumentToc(productId);
+
+        // 递归搜索包含"价格"或"定价"的文档
+        const findPricingDocs = (items: TocItem[]): TocItem[] => {
+          const results: TocItem[] = [];
+          for (const item of items) {
+            if (item.title.includes("价格") || item.title.includes("定价") || item.title.includes("计费")) {
+              results.push(item);
+            }
+            if (item.children) {
+              results.push(...findPricingDocs(item.children));
+            }
+          }
+          return results;
+        };
+
+        const pricingDocs = findPricingDocs(toc);
+
+        // 获取定价文档内容
+        for (const doc of pricingDocs.slice(0, 3)) { // 最多处理3个定价文档
+          const content = await this.getPageContent(doc.pageId);
+          const docPrices = this.parsePriceTable(content);
+          prices.push(...docPrices);
+        }
+
+        if (pricingDocs.length > 0) {
+          source = `${BASE_URL}/docs/${productId}`;
+        }
+      }
+
+      // 如果没有找到特定产品的定价，尝试获取通用定价信息
+      if (prices.length === 0) {
+        // 尝试获取产品列表，找到定价相关的库
+        const products = await this.listProducts();
+
+        // 查找定价相关产品
+        const pricingProducts = products.filter(
+          (p) =>
+            p.name.includes("价格") ||
+            p.name.includes("定价") ||
+            p.name.includes("计费") ||
+            p.name.includes("Billing")
+        );
+
+        for (const product of pricingProducts.slice(0, 2)) {
+          const toc = await this.getDocumentToc(product.productId);
+          for (const item of toc.slice(0, 5)) {
+            const content = await this.getPageContent(item.pageId);
+            const docPrices = this.parsePriceTable(content);
+            prices.push(...docPrices);
+          }
+        }
+
+        if (pricingProducts.length > 0) {
+          source = `${BASE_URL}/docs/${pricingProducts[0].productId}`;
+        }
+      }
+    } catch (error) {
+      // 出错时返回空价格列表，不抛出异常
+      console.error("获取火山引擎价格信息失败:", error);
+    }
+
+    return {
+      provider: this.provider,
+      name: this.name,
+      prices,
+      source,
+      updateDate: undefined,
+    };
   }
 }

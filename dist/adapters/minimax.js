@@ -144,4 +144,60 @@ export class MinimaxAdapter extends CloudDocAdapter {
         const content = await this.fetchText(contentPath);
         return content;
     }
+    /**
+     * 从 Markdown 表格中解析价格数据
+     */
+    parsePriceTable(markdown) {
+        const prices = [];
+        const lines = markdown.split("\n");
+        let inTable = false;
+        let headers = [];
+        for (const line of lines) {
+            if (line.trim().startsWith("|") && line.trim().endsWith("|")) {
+                const cells = line.split("|").map((c) => c.trim()).filter(Boolean);
+                if (!inTable) {
+                    headers = cells;
+                    inTable = true;
+                    continue;
+                }
+                if (cells.every((c) => /^[-:\s]+$/.test(c))) {
+                    continue;
+                }
+                if (cells.length >= 2) {
+                    const productName = cells[0] || "";
+                    const priceStr = cells[cells.length - 1] || "0";
+                    const price = parseFloat(priceStr.replace(/[^0-9.]/g, ""));
+                    const spec = cells.length > 2 ? cells.slice(1, -1).join(" / ") : "";
+                    if (!isNaN(price)) {
+                        prices.push({
+                            productName,
+                            specification: spec,
+                            billingMode: "按量",
+                            price,
+                            unit: "元/千Token",
+                            currency: "CNY",
+                            source: "文档定价页面",
+                        });
+                    }
+                }
+                continue;
+            }
+            if (inTable && line.trim() !== "") {
+                inTable = false;
+            }
+        }
+        return prices;
+    }
+    async getProductPrice(productId) {
+        const url = `${BASE_URL}/docs/guides/pricing-paygo.md`;
+        const markdown = await this.fetchText(url);
+        const prices = this.parsePriceTable(markdown);
+        return {
+            provider: this.provider,
+            name: this.name,
+            prices,
+            source: url,
+            updateDate: undefined,
+        };
+    }
 }

@@ -1,5 +1,5 @@
 import * as cheerio from "cheerio";
-import { CloudDocAdapter, type Product, type TocItem, type SearchResult, type PageMetadata } from "./base.js";
+import { CloudDocAdapter, type Product, type TocItem, type SearchResult, type PageMetadata, type PriceItem, type PriceResult } from "./base.js";
 import { htmlToMarkdown } from "../utils/html-to-md.js";
 
 const BASE_URL = "https://help.aliyun.com";
@@ -177,5 +177,87 @@ export class AliyunAdapter extends CloudDocAdapter {
 
     const content = await this.fetchText(url);
     return htmlToMarkdown(content);
+  }
+
+  private parsePriceTable(markdown: string): PriceItem[] {
+    const prices: PriceItem[] = [];
+    const lines = markdown.split("\n");
+    let inTable = false;
+
+    for (const line of lines) {
+      if (line.trim().startsWith("|") && line.trim().endsWith("|")) {
+        const cells = line.split("|").map((c) => c.trim()).filter(Boolean);
+
+        if (!inTable) {
+          inTable = true;
+          continue;
+        }
+
+        if (cells.every((c) => /^[-:\s]+$/.test(c))) {
+          continue;
+        }
+
+        if (cells.length >= 2) {
+          const productName = cells[0] || "";
+          const priceStr = cells[cells.length - 1] || "0";
+          const price = parseFloat(priceStr.replace(/[^0-9.]/g, ""));
+          const spec = cells.length > 2 ? cells.slice(1, -1).join(" / ") : "";
+
+          if (!isNaN(price)) {
+            prices.push({
+              productName,
+              specification: spec,
+              billingMode: "按量",
+              price,
+              unit: "元/月",
+              currency: "CNY",
+              source: "文档定价页面",
+            });
+          }
+        }
+        continue;
+      }
+
+      if (inTable && line.trim() !== "") {
+        inTable = false;
+      }
+    }
+
+    return prices;
+  }
+
+  async getProductPrice(productId?: string): Promise<PriceResult> {
+    const prices: PriceItem[] = [];
+
+    if (productId) {
+      // 尝试获取产品定价文档
+      const priceUrls = [
+        `${BASE_URL}/zh/${productId}/billing.md`,
+        `${BASE_URL}/zh/${productId}/pricing.md`,
+        `${BASE_URL}/zh/${productId}/price.md`,
+      ];
+
+      for (const url of priceUrls) {
+        try {
+          const content = await this.fetchText(url);
+          const markdown = htmlToMarkdown(content);
+          const parsed = this.parsePriceTable(markdown);
+          if (parsed.length > 0) {
+            prices.push(...parsed);
+            break;
+          }
+        } catch {
+          continue;
+        }
+      }
+    }
+
+    return {
+      provider: this.provider,
+      name: this.name,
+      prices,
+      source: productId ? `${BASE_URL}/zh/${productId}/billing` : `${BASE_URL}/price`,
+      updateDate: undefined,
+    };
   }
 }

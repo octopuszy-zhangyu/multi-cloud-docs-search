@@ -167,4 +167,103 @@ export class CucloudAdapter extends CloudDocAdapter {
             return "无法获取文档内容";
         }
     }
+    parsePriceTable(markdown, source) {
+        const lines = markdown.split("\n");
+        const prices = [];
+        let inTable = false;
+        let headers = [];
+        for (let i = 0; i < lines.length; i++) {
+            const line = lines[i].trim();
+            if (line.startsWith("|") && line.endsWith("|")) {
+                const cells = line.split("|").filter((c) => c.trim().length > 0).map((c) => c.trim());
+                if (!inTable) {
+                    inTable = true;
+                    headers = cells;
+                    i++;
+                    if (i < lines.length && lines[i].trim().match(/^[\s|:-]+$/)) {
+                        i++;
+                    }
+                    continue;
+                }
+                if (line.match(/^[\s|:-]+$/)) {
+                    continue;
+                }
+                if (cells.length >= 2) {
+                    const productName = cells[0];
+                    const lastCell = cells[cells.length - 1];
+                    const priceMatch = lastCell.match(/(\d+(?:\.\d+)?)/);
+                    const price = priceMatch ? parseFloat(priceMatch[1]) : 0;
+                    let billingMode = "按量计费";
+                    const billingHeader = headers.find((h) => h.includes("计费") || h.includes("方式") || h.includes("模式"));
+                    if (billingHeader) {
+                        const billingIdx = headers.indexOf(billingHeader);
+                        if (billingIdx < cells.length) {
+                            billingMode = cells[billingIdx];
+                        }
+                    }
+                    const specification = cells.length >= 2 ? cells.slice(1, -1).join(" ") : cells[0];
+                    let unit = "小时";
+                    const unitHeader = headers.find((h) => h.includes("单位") || h.includes("周期"));
+                    if (unitHeader) {
+                        const unitIdx = headers.indexOf(unitHeader);
+                        if (unitIdx < cells.length) {
+                            unit = cells[unitIdx];
+                        }
+                    }
+                    prices.push({
+                        productName,
+                        specification,
+                        billingMode,
+                        price,
+                        unit,
+                        currency: "CNY",
+                        source,
+                    });
+                }
+            }
+            else {
+                inTable = false;
+                headers = [];
+            }
+        }
+        return prices;
+    }
+    async getProductPrice(productId) {
+        const result = {
+            provider: this.provider,
+            name: this.name,
+            prices: [],
+            source: `${SUPPORT_URL}/document/${productId || ""}.html`,
+        };
+        if (!productId) {
+            return result;
+        }
+        try {
+            // Try to fetch pricing documentation via search API
+            const priceKeywords = ["价格", "计费", "定价", "费用"];
+            for (const keyword of priceKeywords) {
+                try {
+                    const url = `${SEARCH_API}/product/queryAll?index=cms_document&pageNo=1&pageSize=10&keyword=${encodeURIComponent(keyword)}&productId=${productId}&referrer=${encodeURIComponent(SUPPORT_URL)}`;
+                    const data = await this.fetchJson(url);
+                    if (data.data?.docList && data.data.docList.length > 0) {
+                        const doc = data.data.docList[0];
+                        const content = doc.content.replace(/<[^>]+>/g, "");
+                        const prices = this.parsePriceTable(content, `${SUPPORT_URL}/document/${doc.document_id}.html`);
+                        if (prices.length > 0) {
+                            result.prices = prices;
+                            result.source = `${SUPPORT_URL}/document/${doc.document_id}.html`;
+                            break;
+                        }
+                    }
+                }
+                catch {
+                    continue;
+                }
+            }
+        }
+        catch {
+            // Return empty prices if unable to fetch
+        }
+        return result;
+    }
 }

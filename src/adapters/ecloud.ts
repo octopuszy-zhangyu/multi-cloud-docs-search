@@ -1,5 +1,5 @@
 import * as cheerio from "cheerio";
-import { CloudDocAdapter, type Product, type TocItem, type SearchResult, type PageMetadata } from "./base.js";
+import { CloudDocAdapter, type Product, type TocItem, type SearchResult, type PageMetadata, type PriceItem, type PriceResult } from "./base.js";
 import { htmlToMarkdown } from "../utils/html-to-md.js";
 
 const BASE_URL = "https://ecloud.10086.cn";
@@ -292,5 +292,125 @@ export class EcloudAdapter extends CloudDocAdapter {
     }
 
     return htmlToMarkdown(contentHtml);
+  }
+
+  private parsePriceTable(markdown: string, source: string): PriceItem[] {
+    const lines = markdown.split("\n");
+    const prices: PriceItem[] = [];
+    let inTable = false;
+    let headers: string[] = [];
+
+    for (let i = 0; i < lines.length; i++) {
+      const line = lines[i].trim();
+
+      // Detect table start: line starts and ends with |
+      if (line.startsWith("|") && line.endsWith("|")) {
+        const cells = line.split("|").filter((c) => c.trim().length > 0).map((c) => c.trim());
+
+        if (!inTable) {
+          inTable = true;
+          headers = cells;
+          // Skip header row and separator row (next line)
+          i++;
+          if (i < lines.length && lines[i].trim().match(/^[\s|:-]+$/)) {
+            i++;
+          }
+          continue;
+        }
+
+        // Skip separator row
+        if (line.match(/^[\s|:-]+$/)) {
+          continue;
+        }
+
+        // Parse data row
+        if (cells.length >= 2) {
+          const productName = cells[0];
+          // Try to find a numeric price in the last cell
+          const lastCell = cells[cells.length - 1];
+          const priceMatch = lastCell.match(/(\d+(?:\.\d+)?)/);
+          const price = priceMatch ? parseFloat(priceMatch[1]) : 0;
+
+          // Determine billing mode from headers or cell content
+          let billingMode = "按量计费";
+          const billingHeader = headers.find((h) => h.includes("计费") || h.includes("方式") || h.includes("模式"));
+          if (billingHeader) {
+            const billingIdx = headers.indexOf(billingHeader);
+            if (billingIdx < cells.length) {
+              billingMode = cells[billingIdx];
+            }
+          }
+
+          // Determine specification from second column
+          const specification = cells.length >= 2 ? cells.slice(1, -1).join(" ") : cells[0];
+
+          // Determine unit from headers
+          let unit = "小时";
+          const unitHeader = headers.find((h) => h.includes("单位") || h.includes("周期"));
+          if (unitHeader) {
+            const unitIdx = headers.indexOf(unitHeader);
+            if (unitIdx < cells.length) {
+              unit = cells[unitIdx];
+            }
+          }
+
+          prices.push({
+            productName,
+            specification,
+            billingMode,
+            price,
+            unit,
+            currency: "CNY",
+            source,
+          });
+        }
+      } else {
+        inTable = false;
+        headers = [];
+      }
+    }
+
+    return prices;
+  }
+
+  async getProductPrice(productId?: string): Promise<PriceResult> {
+    const result: PriceResult = {
+      provider: this.provider,
+      name: this.name,
+      prices: [],
+      source: `${HELP_CENTER_URL}/doc/category/${productId || ""}`,
+    };
+
+    if (!productId) {
+      return result;
+    }
+
+    try {
+      // Try to fetch pricing documentation page
+      // Common pricing page patterns for ecloud
+      const priceUrls = [
+        `${HELP_CENTER_URL}/doc/category/${productId}`,
+        `${BASE_URL}/op-help-center/doc/category/${productId}`,
+      ];
+
+      for (const url of priceUrls) {
+        try {
+          const html = await this.fetchHtml(url);
+          const markdown = htmlToMarkdown(html);
+          const prices = this.parsePriceTable(markdown, url);
+          if (prices.length > 0) {
+            result.prices = prices;
+            result.source = url;
+            break;
+          }
+        } catch {
+          continue;
+        }
+      }
+    } catch {
+      // Return empty prices if unable to fetch
+    }
+
+    return result;
   }
 }

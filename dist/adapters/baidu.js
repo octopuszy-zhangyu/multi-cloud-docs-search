@@ -103,4 +103,77 @@ export class BaiduAdapter extends CloudDocAdapter {
         }
         return htmlToMarkdown(html);
     }
+    parsePriceTable(markdown) {
+        const prices = [];
+        const lines = markdown.split("\n");
+        let inTable = false;
+        for (const line of lines) {
+            if (line.trim().startsWith("|") && line.trim().endsWith("|")) {
+                const cells = line.split("|").map((c) => c.trim()).filter(Boolean);
+                if (!inTable) {
+                    inTable = true;
+                    continue;
+                }
+                if (cells.every((c) => /^[-:\s]+$/.test(c))) {
+                    continue;
+                }
+                if (cells.length >= 2) {
+                    const productName = cells[0] || "";
+                    const priceStr = cells[cells.length - 1] || "0";
+                    const price = parseFloat(priceStr.replace(/[^0-9.]/g, ""));
+                    const spec = cells.length > 2 ? cells.slice(1, -1).join(" / ") : "";
+                    if (!isNaN(price)) {
+                        prices.push({
+                            productName,
+                            specification: spec,
+                            billingMode: "按量",
+                            price,
+                            unit: "元/月",
+                            currency: "CNY",
+                            source: "文档定价页面",
+                        });
+                    }
+                }
+                continue;
+            }
+            if (inTable && line.trim() !== "") {
+                inTable = false;
+            }
+        }
+        return prices;
+    }
+    async getProductPrice(productId) {
+        const prices = [];
+        if (productId) {
+            // 百度云产品定价页面通常在 /doc/{productId}/pricing 或产品详情页
+            const priceUrls = [
+                `${BASE_URL}/doc/${productId}/pricing`,
+                `${BASE_URL}/doc/${productId}/price`,
+                `${BASE_URL}/doc/${productId}/index.html`,
+            ];
+            for (const url of priceUrls) {
+                try {
+                    const html = await this.fetchHtml(url);
+                    const $ = cheerio.load(html);
+                    const content = $(".post__body").first();
+                    const markdown = htmlToMarkdown(content.length > 0 ? content.html() || "" : html);
+                    const parsed = this.parsePriceTable(markdown);
+                    if (parsed.length > 0) {
+                        prices.push(...parsed);
+                        break;
+                    }
+                }
+                catch {
+                    continue;
+                }
+            }
+        }
+        return {
+            provider: this.provider,
+            name: this.name,
+            prices,
+            source: productId ? `${BASE_URL}/doc/${productId}/pricing` : `${BASE_URL}/doc/index.html`,
+            updateDate: undefined,
+        };
+    }
 }

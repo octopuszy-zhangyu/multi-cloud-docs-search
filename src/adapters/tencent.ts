@@ -1,5 +1,5 @@
 import * as cheerio from "cheerio";
-import { CloudDocAdapter, type Product, type TocItem, type SearchResult, type PageMetadata } from "./base.js";
+import { CloudDocAdapter, type Product, type TocItem, type SearchResult, type PageMetadata, type PriceItem, type PriceResult } from "./base.js";
 import { htmlToMarkdown } from "../utils/html-to-md.js";
 
 const BASE_URL = "https://cloud.tencent.com";
@@ -144,5 +144,129 @@ export class TencentAdapter extends CloudDocAdapter {
   async getPageContent(contentPath: string): Promise<string> {
     const html = await this.fetchHtml(contentPath);
     return htmlToMarkdown(html);
+  }
+
+  /**
+   * 从 Markdown 文本中解析价格表格
+   */
+  private parsePriceTable(markdown: string, sourceUrl: string): PriceItem[] {
+    const lines = markdown.split("\n");
+    const prices: PriceItem[] = [];
+    let inTable = false;
+    let headers: string[] = [];
+
+    for (let i = 0; i < lines.length; i++) {
+      const line = lines[i].trim();
+
+      // 检测表格行（以 | 开头和结尾）
+      if (line.startsWith("|") && line.endsWith("|")) {
+        const cells = line.split("|").map((c) => c.trim()).filter((c) => c !== "");
+
+        if (!inTable) {
+          // 第一行是表头
+          headers = cells;
+          inTable = true;
+          continue;
+        }
+
+        // 跳过分隔行（所有单元格都是 ---）
+        if (cells.every((c) => /^-+\s*$/.test(c))) {
+          continue;
+        }
+
+        // 解析数据行
+        if (cells.length >= 2) {
+          const productName = cells[0] || "";
+          const lastCell = cells[cells.length - 1] || "";
+          // 尝试从最后一列提取价格数字
+          const priceMatch = lastCell.match(/[\d,.]+/);
+          if (priceMatch) {
+            prices.push({
+              productName,
+              specification: cells.length > 2 ? cells.slice(1, -1).join(" / ") : "",
+              billingMode: headers.includes("计费模式") || headers.includes("付费模式") ? cells[headers.indexOf("计费模式")] || cells[headers.indexOf("付费模式")] || "" : "",
+              price: parseFloat(priceMatch[0].replace(/,/g, "")),
+              unit: "",
+              currency: "CNY",
+              source: sourceUrl,
+            });
+          }
+        }
+      } else {
+        inTable = false;
+        headers = [];
+      }
+    }
+
+    return prices;
+  }
+
+  async getProductPrice(productId?: string): Promise<PriceResult> {
+    const name = this.name;
+    const sourceUrl = "https://buy.cloud.tencent.com/price";
+
+    if (!productId) {
+      // 无 productId，尝试获取通用定价页面
+      try {
+        const html = await this.fetchHtml(sourceUrl);
+        const md = htmlToMarkdown(html);
+        const prices = this.parsePriceTable(md, sourceUrl);
+
+        return {
+          provider: this.provider,
+          name,
+          prices,
+          source: sourceUrl,
+        };
+      } catch {
+        return {
+          provider: this.provider,
+          name,
+          prices: [],
+          source: sourceUrl,
+        };
+      }
+    }
+
+    // 有 productId，依次尝试多个可能的定价页面
+    const urls = [
+      `${BASE_URL}/document/product/${productId}/billing`,
+      `https://buy.cloud.tencent.com/price/${productId}`,
+      `${BASE_URL}/document/product/${productId}`,
+    ];
+
+    for (const url of urls) {
+      try {
+        const html = await this.fetchHtml(url);
+        const md = htmlToMarkdown(html);
+        const prices = this.parsePriceTable(md, url);
+
+        if (prices.length > 0) {
+          // 尝试从页面提取更新时间
+          let updateDate: string | undefined;
+          const updateMatch = md.match(/(?:更新|发布|修改)(?:时间|日期)[：:]\s*([\d-]+)/);
+          if (updateMatch) {
+            updateDate = updateMatch[1];
+          }
+
+          return {
+            provider: this.provider,
+            name,
+            prices,
+            source: url,
+            updateDate,
+          };
+        }
+      } catch {
+        continue;
+      }
+    }
+
+    return {
+      provider: this.provider,
+      name,
+      prices: [],
+      source: sourceUrl,
+    };
   }
 }

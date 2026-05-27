@@ -1,5 +1,5 @@
 import * as cheerio from "cheerio";
-import { CloudDocAdapter, type Product, type TocItem, type SearchResult, type PageMetadata } from "./base.js";
+import { CloudDocAdapter, type Product, type TocItem, type SearchResult, type PageMetadata, type PriceItem, type PriceResult } from "./base.js";
 import { htmlToMarkdown } from "../utils/html-to-md.js";
 
 const BASE_URL = "https://api-docs.deepseek.com";
@@ -179,5 +179,88 @@ export class DeepseekAdapter extends CloudDocAdapter {
     }
 
     return htmlToMarkdown(mainContent);
+  }
+
+  /**
+   * 从 Markdown 表格中解析价格数据
+   */
+  private parsePriceTable(markdown: string): PriceItem[] {
+    const prices: PriceItem[] = [];
+    const lines = markdown.split("\n");
+    let inTable = false;
+    let headers: string[] = [];
+
+    for (const line of lines) {
+      // 检测表格开始（包含 | 的行）
+      if (line.trim().startsWith("|") && line.trim().endsWith("|")) {
+        const cells = line.split("|").map((c) => c.trim()).filter(Boolean);
+
+        if (!inTable) {
+          // 表头行
+          headers = cells;
+          inTable = true;
+          continue;
+        }
+
+        // 跳过分隔行（|---|）
+        if (cells.every((c) => /^[-:\s]+$/.test(c))) {
+          continue;
+        }
+
+        // 数据行
+        if (cells.length >= 2) {
+          const productName = cells[0] || "";
+          const priceStr = cells[cells.length - 1] || "0";
+          const price = parseFloat(priceStr.replace(/[^0-9.]/g, ""));
+          const spec = cells.length > 2 ? cells.slice(1, -1).join(" / ") : "";
+
+          if (!isNaN(price)) {
+            prices.push({
+              productName,
+              specification: spec,
+              billingMode: "按量",
+              price,
+              unit: priceStr.includes("$") ? "元/百万Token" : "元/百万Token",
+              currency: priceStr.includes("$") ? "USD" : "CNY",
+              source: "文档定价页面",
+            });
+          }
+        }
+        continue;
+      }
+
+      // 非表格行，重置表格状态
+      if (inTable && line.trim() !== "") {
+        // 表格结束
+        inTable = false;
+      }
+    }
+
+    return prices;
+  }
+
+  async getProductPrice(productId?: string): Promise<PriceResult> {
+    const url = `${BASE_URL}/quick_start/pricing`;
+    const html = await this.fetchText(url);
+    const $ = cheerio.load(html);
+
+    const mainContent =
+      $("article").html() ||
+      $("main").html() ||
+      $(".markdown").html() ||
+      $(".theme-doc-markdown").html() ||
+      $("body").html() ||
+      "";
+
+    const markdown = htmlToMarkdown(mainContent);
+    const prices = this.parsePriceTable(markdown);
+
+    return {
+      provider: this.provider,
+      name: this.name,
+      prices,
+      source: "https://api-docs.deepseek.com/quick_start/pricing",
+      updateDate: undefined,
+    };
   }
 }

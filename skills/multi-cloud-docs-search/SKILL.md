@@ -117,6 +117,37 @@ description: Use when the user asks about cloud provider products, services, doc
 ...
 ```
 
+### 6. get_product_price
+
+获取指定云厂商的产品价格信息。不传 productId 则返回所有产品价格概览。
+
+**参数**：
+```typescript
+{ provider: "deepseek" }
+// 或指定产品
+{ provider: "ctyun", productId: "11061839" }
+```
+
+**返回**：
+```json
+{
+  "provider": "deepseek",
+  "name": "DeepSeek",
+  "prices": [
+    {
+      "productName": "DeepSeek-V4-Flash",
+      "specification": "输入",
+      "billingMode": "按量",
+      "price": 1,
+      "unit": "元/百万Token",
+      "currency": "CNY",
+      "source": "文档定价页面"
+    }
+  ],
+  "source": "https://api-docs.deepseek.com/quick_start/pricing"
+}
+```
+
 ## 各厂商 pageId 格式
 
 | provider | pageId 格式 | 示例 |
@@ -169,7 +200,28 @@ description: Use when the user asks about cloud provider products, services, doc
 |---------|-----------|
 | 云服务器 ECS | 128 |
 | AI服务平台 AISP | 2357 |
+| AI算力平台 AICP | 1398 |
+| AI计算集群 AICC | 2252 |
 | 对象存储 OSS | 133 |
+
+### AI/模型服务产品（用于价格查询）
+| 厂商 | 产品名称 | productId |
+|------|---------|-----------|
+| 天翼云 | Token服务（原模型推理服务） | 11061839 |
+| 天翼云 | AI Store | 11085484 |
+| 阿里云 | 大模型服务平台百炼 | model-studio |
+| 阿里云 | 人工智能平台 PAI | pai |
+| 火山引擎 | 大模型服务（待确认） | - |
+| 腾讯云 | 大模型服务平台 TokenHub | 1823 |
+| 腾讯云 | 腾讯混元大模型 | 1729 |
+| 华为云 | MaaS 模型即服务 | maas |
+| 华为云 | 魔坊 ModelArts | modelarts |
+| 移动云 | 模型服务平台 MoMA | 1456 |
+| 移动云 | AI原生行业智能体 | 1428 |
+| 联通云 | AI服务平台 AISP | 2357 |
+| 联通云 | AI算力平台 AICP | 1398 |
+| 百度云 | BML 全功能AI开发平台 | BML |
+| 百度云 | 智能代码助手 COMATE | COMATE |
 
 > 更多产品 productId 通过 `list_products` 获取
 
@@ -196,6 +248,26 @@ description: Use when the user asks about cloud provider products, services, doc
 2. 或调用 `search_documents` 搜索关键词
 3. 调用 `get_page_metadata` 获取 contentPath，再调用 `get_page_content` 获取正文
 4. 总结回答
+
+### 价格查询流程（当用户询问价格时）
+
+**优先从文档获取价格**（推荐，数据更准确）：
+1. **获取产品列表**：调用 `list_products({ provider: "xxx" })` 获取产品 productId
+2. **搜索定价文档**：调用 `search_documents({ provider: "xxx", productId: "xxx", keyword: "价格" })` 搜索定价相关页面
+3. **获取定价页面内容**：调用 `get_page_metadata` → `get_page_content` 获取定价页面 Markdown 内容
+4. **提取价格表**：从 Markdown 内容中解析价格表格，提取产品名称、规格、价格等信息
+5. **总结回答**：基于文档中的价格信息回答用户问题
+
+**回退方案**（当文档中找不到价格时）：
+1. 调用 `get_product_price({ provider: "xxx" })` 获取价格数据
+2. 如果返回空，尝试带 productId 调用：`get_product_price({ provider: "xxx", productId: "xxx" })`
+3. 总结回答
+
+### 价格获取注意事项
+- AI 厂商（DeepSeek、MiniMax、百炼）的定价页面可直接通过 `get_product_price` 获取
+- 传统云厂商（天翼云、阿里云）需指定 productId 才能获取价格
+- 火山引擎、腾讯云、华为云、移动云、联通云、百度云的 AI 产品价格可能不在文档中，需通过其他方式获取
+- `get_product_price` 返回的价格数据可能不如文档中的价格表完整准确，优先使用文档搜索
 
 ## 注意事项
 

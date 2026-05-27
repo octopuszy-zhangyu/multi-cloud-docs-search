@@ -30,6 +30,28 @@ export interface PageMetadata {
   updateDate?: string;
 }
 
+/** 价格条目 */
+export interface PriceItem {
+  productName: string;
+  specification: string;
+  region?: string;
+  billingMode: string;
+  price: number;
+  unit: string;
+  currency: string;
+  source: string;
+  note?: string;
+}
+
+/** 价格查询结果 */
+export interface PriceResult {
+  provider: string;
+  name: string;
+  prices: PriceItem[];
+  source: string;
+  updateDate?: string;
+}
+
 /** 云厂商文档适配器抽象基类 */
 export abstract class CloudDocAdapter {
   /** 厂商标识，如 "ctyun"、"aliyun" */
@@ -51,4 +73,7 @@ export abstract class CloudDocAdapter {
 
   /** 获取文档页面 Markdown 正文 */
   abstract getPageContent(contentPath: string): Promise<string>;
+
+  /** 获取产品价格信息 */
+  abstract getProductPrice(productId?: string): Promise<PriceResult>;
 }

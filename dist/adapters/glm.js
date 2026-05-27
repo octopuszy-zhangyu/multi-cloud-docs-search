@@ -189,4 +189,91 @@ export class GlmAdapter extends CloudDocAdapter {
         }
         return htmlToMarkdown(html);
     }
+    /**
+     * 从 Markdown 表格中解析价格数据
+     */
+    parsePriceTable(markdown) {
+        const prices = [];
+        const lines = markdown.split("\n");
+        let inTable = false;
+        for (const line of lines) {
+            if (line.trim().startsWith("|") && line.trim().endsWith("|")) {
+                const cells = line.split("|").map((c) => c.trim()).filter(Boolean);
+                if (!inTable) {
+                    inTable = true;
+                    continue;
+                }
+                if (cells.every((c) => /^[-:\s]+$/.test(c))) {
+                    continue;
+                }
+                if (cells.length >= 2) {
+                    const productName = cells[0] || "";
+                    const priceStr = cells[cells.length - 1] || "0";
+                    const price = parseFloat(priceStr.replace(/[^0-9.]/g, ""));
+                    const spec = cells.length > 2 ? cells.slice(1, -1).join(" / ") : "";
+                    if (!isNaN(price)) {
+                        prices.push({
+                            productName,
+                            specification: spec,
+                            billingMode: "按量",
+                            price,
+                            unit: "元/百万Token",
+                            currency: "CNY",
+                            source: "文档定价页面",
+                        });
+                    }
+                }
+                continue;
+            }
+            if (inTable && line.trim() !== "") {
+                inTable = false;
+            }
+        }
+        return prices;
+    }
+    async getProductPrice(productId) {
+        // GLM 价格页面是 SPA，需要从 llms-full.txt 中查找定价相关内容
+        const fullContent = await this.getLlmsFullContent();
+        // 查找包含 "pricing" 或 "价格" 的页面
+        const pricingMatch = fullContent.match(/Source:\s*.*pricing.*\n\n([\s\S]*?)(?=\n^#\s|\n^Source:\s|\z)/m);
+        let prices = [];
+        let source = "https://open.bigmodel.cn/pricing";
+        if (pricingMatch) {
+            const pricingContent = pricingMatch[1];
+            prices = this.parsePriceTable(pricingContent);
+        }
+        // 如果没有找到，尝试从 HTML 页面提取
+        if (prices.length === 0) {
+            const html = await this.fetchHtml("https://open.bigmodel.cn/pricing");
+            const $ = cheerio.load(html);
+            // 尝试从页面中提取价格数据
+            const priceElements = $("[class*='price'], [class*='Pricing'], [data-price]").text();
+            if (priceElements) {
+                // 从页面文本中解析价格
+                const priceRegex = /([一-龥a-zA-Z0-9\s]+?)[:：]\s*([0-9.]+)\s*(元|美元|\$)/g;
+                let match;
+                while ((match = priceRegex.exec(priceElements)) !== null) {
+                    const productName = match[1].trim();
+                    const price = parseFloat(match[2]);
+                    const currency = match[3].includes("$") || match[3].includes("美元") ? "USD" : "CNY";
+                    prices.push({
+                        productName,
+                        specification: "",
+                        billingMode: "按量",
+                        price,
+                        unit: "元/百万Token",
+                        currency,
+                        source: "定价页面",
+                    });
+                }
+            }
+        }
+        return {
+            provider: this.provider,
+            name: this.name,
+            prices,
+            source,
+            updateDate: undefined,
+        };
+    }
 }
