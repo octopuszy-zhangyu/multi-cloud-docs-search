@@ -14,7 +14,7 @@ async function main() {
   // 1. 通过 Streamable HTTP 连接到远程 Worker
   const httpTransport = new StreamableHTTPClientTransport(new URL(REMOTE_URL));
   const client = new Client(
-    { name: "ctyun-docs-search-bridge", version: "1.0.0" },
+    { name: "multi-cloud-docs-search-bridge", version: "1.0.0" },
     { capabilities: {} }
   );
   await client.connect(httpTransport);
@@ -24,7 +24,7 @@ async function main() {
 
   // 3. 创建本地 stdio 服务器
   const server = new Server(
-    { name: "ctyun-docs-search", version: "1.0.0" },
+    { name: "multi-cloud-docs-search", version: "1.0.0" },
     { capabilities: { tools: {} } }
   );
 

@@ -1,7 +1,7 @@
 {
-  "name": "ctyun-docs-search",
+  "name": "multi-cloud-docs-search",
   "version": "1.0.0",
-  "description": "MCP Server for 天翼云(CTYUN) documentation search",
+  "description": "MCP Server for multi-cloud provider documentation search",
   "main": "src/index.ts",
   "scripts": {
     "dev": "wrangler dev",

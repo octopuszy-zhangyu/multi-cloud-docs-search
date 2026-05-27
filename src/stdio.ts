@@ -5,7 +5,7 @@ import { getAdapter } from "./adapters";
 
 const server = new McpServer(
   {
-    name: "ctyun-docs-search",
+    name: "multi-cloud-docs-search",
     version: "1.0.0",
   },
   {

@@ -1,5 +1,5 @@
 ---
-name: ctyun-docs-search
+name: multi-cloud-docs-search
 description: Use when the user asks about cloud provider products, services, documentation, or pricing. Supports 天翼云(CTYUN), 阿里云(Aliyun), 火山引擎(Volcengine), 腾讯云(Tencent Cloud), 华为云(Huawei Cloud), 移动云(Ecloud), 联通云(Cucloud). Searches official cloud provider documentation sites and returns relevant content.
 ---
 

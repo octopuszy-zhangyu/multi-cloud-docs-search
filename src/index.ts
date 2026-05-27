@@ -10,16 +10,16 @@ export default {
   async fetch(request: Request, env: Env, ctx: ExecutionContext): Promise<Response> {
     const url = new URL(request.url);
     if (url.pathname === "/mcp") {
-      return CtyunDocsMCP.serve("/mcp").fetch(request, env, ctx);
+      return MultiCloudDocsMCP.serve("/mcp").fetch(request, env, ctx);
     }
     return new Response("Not found", { status: 404 });
   },
 };
 
-export class CtyunDocsMCP extends McpAgent<Env, unknown> {
+export class MultiCloudDocsMCP extends McpAgent<Env, unknown> {
   server = new McpServer(
     {
-      name: "ctyun-docs-search",
+      name: "multi-cloud-docs-search",
       version: "1.0.0",
     },
     {

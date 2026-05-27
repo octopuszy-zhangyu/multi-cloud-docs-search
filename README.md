@@ -1,4 +1,4 @@
-# ctyun-docs-search
+# multi-cloud-docs-search
 
 多云文档搜索 MCP Server — 在 Claude 中直接搜索和获取云厂商官方产品文档。采用适配器架构，支持多云厂商扩展。
 
@@ -10,7 +10,7 @@
 2. 选择 Add Custom Connector
 3. 输入 MCP Server URL：
    ```
-   https://ctyun-docs-search.<你的pages域名>.pages.dev/mcp
+   https://multi-cloud-docs-search.<你的pages域名>.pages.dev/mcp
    ```
 4. 保存后即可使用
 

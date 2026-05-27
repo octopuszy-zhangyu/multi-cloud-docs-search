@@ -94,7 +94,7 @@ npm run build    # 构建
 - 联通云通过首页 HTML 中嵌入的 `finalResConfig` JSON 数据获取产品列表和文档目录
 - 联通云文档详情页为 Vue SPA，有反爬保护（JS 混淆 + debugger 断点），`getPageContent` 返回搜索 API 摘要内容
 - 联通云搜索 API（`gateway.cucloud.cn/search/`）可正常访问，用于文档搜索和内容摘要
-- 详细 API 规范见 `skills/ctyun-docs-search/SKILL.md`
+- 详细 API 规范见 `skills/multi-cloud-docs-search/SKILL.md`
 
 ## 部署与验证
 
