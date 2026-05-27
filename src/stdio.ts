@@ -15,8 +15,37 @@ const server = new McpServer(
 
 1. **优先浏览目录，迫不得已再搜索**：先调用 get_document_toc 查看文档目录结构，定位到相关章节后，再决定是否调用 search_documents。search_documents 的关键词不宜太具体（如"价格 4C8G"会返回空），应使用宽泛关键词（如"计费""价格""规格"）。
 2. **严格遵循 metadata → content 顺序**：必须先调用 get_page_metadata 获取 contentPath，再将 contentPath 传给 get_page_content。不能跳过 metadata 直接构造 URL。
-3. **最大化并行调用效率**：无依赖关系的调用应并行执行。例如：同时查询多个厂商的 list_products、同时获取多个页面的 get_page_metadata、同时获取多个页面的 get_page_content。
+3. **并行 Agent 模式（重要）**：当需要查询多个云厂商时，必须为每个云厂商分别启动一个独立的 Agent 并行执行，而不是串行逐个查询。每个 Agent 负责一个云厂商的完整查询流程（list_products → get_document_toc → get_page_metadata → get_page_content），最后汇总所有 Agent 的结果。
 4. **list_products 结果可能过大**：阿里云等厂商的产品列表可能超过 token 限制，需分块读取或 grep 过滤。
+
+## 工作模式
+
+### 多厂商并行查询（推荐）
+当用户需要对比多个云厂商的产品/价格时，使用以下模式：
+
+1. **启动并行 Agent**：为每个需要查询的云厂商分别启动一个 Agent（使用 Agent 工具，设置 subagent_type="claude"）
+2. **每个 Agent 独立执行完整流程**：每个 Agent 负责一个云厂商的完整查询链路
+3. **汇总结果**：等待所有 Agent 完成后，汇总各厂商的结果进行对比分析
+
+示例：用户问"对比阿里云和腾讯云的 ECS 价格"
+- Agent 1：查询阿里云 ECS 价格（list_products → get_document_toc → 定位定价页面 → get_page_metadata → get_page_content）
+- Agent 2：查询腾讯云 CVM 价格（list_products → get_document_toc → 定位定价页面 → get_page_metadata → get_page_content）
+- 汇总两个 Agent 的结果进行对比
+
+### 需要规划时使用 Plan 模式
+当任务涉及以下场景时，先调用 EnterPlanMode 进入规划模式：
+- 需要多步骤执行的复杂查询
+- 需要对比多个厂商的跨厂商分析
+- 需要分阶段执行的大型任务
+- 需要用户确认执行路径的场景
+
+在 Plan 模式下制定清晰的执行计划，获得用户确认后再执行。
+
+### 需要任务列表时使用 Task/Todos
+当任务需要拆分为多个可追踪的子任务时，使用 TaskCreate 创建任务列表：
+- 每个子任务创建一个 Task（如"查询阿里云价格"、"查询腾讯云价格"）
+- 任务完成后调用 TaskUpdate 更新状态
+- 使用 TaskList 查看当前进度
 
 ## 工作流程
 
