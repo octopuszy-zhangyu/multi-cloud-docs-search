@@ -15,7 +15,7 @@
   "mcpServers": {
     "multi-cloud-docs-search": {
       "command": "npx",
-      "args": ["octopuszy-zhangyu/multi-cloud-docs-search"]
+      "args": ["multi-cloud-docs-search"]
     }
   }
 }
@@ -30,7 +30,7 @@
   "mcpServers": {
     "multi-cloud-docs-search": {
       "command": "npx",
-      "args": ["octopuszy-zhangyu/multi-cloud-docs-search"]
+      "args": ["multi-cloud-docs-search"]
     }
   }
 }
@@ -45,7 +45,7 @@
   "mcpServers": {
     "multi-cloud-docs-search": {
       "command": "npx",
-      "args": ["octopuszy-zhangyu/multi-cloud-docs-search"]
+      "args": ["multi-cloud-docs-search"]
     }
   }
 }
@@ -60,7 +60,7 @@
   "mcpServers": {
     "multi-cloud-docs-search": {
       "command": "npx",
-      "args": ["octopuszy-zhangyu/multi-cloud-docs-search"]
+      "args": ["multi-cloud-docs-search"]
     }
   }
 }
@@ -73,30 +73,23 @@
   "mcpServers": {
     "multi-cloud-docs-search": {
       "command": "npx",
-      "args": ["octopuszy-zhangyu/multi-cloud-docs-search"]
+      "args": ["multi-cloud-docs-search"]
     }
   }
 }
 ```
 
-> **说明**：`npx user/repo` 会自动从 GitHub 下载并执行，无需手动 clone 或构建。国内用户如果 GitHub 访问慢，可使用 Gitee 镜像（见下方说明）。
+> **说明**：`npx multi-cloud-docs-search` 会自动从 npm 下载并执行，无需手动 clone 或构建。国内用户如果 npm 访问慢，可设置 npm 镜像源（见下方说明）。
 
-### Gitee 镜像（国内加速）
+### 国内镜像（可选）
 
-如果 GitHub 访问不稳定，可在 Gitee 上创建镜像仓库后使用：
+如果 npm 访问慢，可设置国内镜像源：
 
-```json
-{
-  "mcpServers": {
-    "multi-cloud-docs-search": {
-      "command": "npx",
-      "args": ["git+https://gitee.com/octopuszy-zhangyu/multi-cloud-docs-search.git"]
-    }
-  }
-}
+```bash
+npm config set registry https://registry.npmmirror.com/
 ```
 
-> 在 Gitee 上创建镜像：登录 Gitee → 右上角 + → 从 GitHub 导入仓库 → 输入 `octopuszy-zhangyu/multi-cloud-docs-search` → 导入即可。
+然后正常使用 `npx multi-cloud-docs-search` 即可。
 
 ### 工作原理
 
