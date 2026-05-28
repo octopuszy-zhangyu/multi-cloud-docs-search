@@ -1,5 +1,5 @@
 import * as cheerio from "cheerio";
-import { CloudDocAdapter, type Product, type TocItem, type SearchResult, type PageMetadata, type PriceItem, type PriceResult, type PaginatedResult, type ListProductsOptions, type TocOptions } from "./base.js";
+import { CloudDocAdapter, type Product, type TocItem, type SearchResult, type PageMetadata, type PriceItem, type PriceResult, type PaginatedResult, type ListProductsOptions, type TocOptions, type PriceQueryOptions } from "./base.js";
 import { htmlToMarkdown } from "../utils/html-to-md.js";
 
 const BASE_URL = "https://api-docs.deepseek.com";
@@ -17,20 +17,6 @@ interface SitemapXml {
 export class DeepseekAdapter extends CloudDocAdapter {
   readonly provider = "deepseek";
   readonly name = "DeepSeek";
-
-  private async fetchText(url: string): Promise<string> {
-    const res = await fetch(url, {
-      headers: {
-        "User-Agent":
-          "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
-        Accept: "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
-      },
-    });
-    if (!res.ok) {
-      throw new Error(`Fetch failed: ${res.status} ${res.statusText}`);
-    }
-    return res.text();
-  }
 
   /**
    * 从 sitemap.xml 解析所有文档页面 URL
@@ -276,7 +262,7 @@ export class DeepseekAdapter extends CloudDocAdapter {
     return prices;
   }
 
-  async getProductPrice(productId?: string): Promise<PriceResult> {
+  async getProductPrice(productId?: string, _options?: PriceQueryOptions): Promise<PriceResult> {
     const url = `${BASE_URL}/quick_start/pricing`;
     const html = await this.fetchText(url);
     const $ = cheerio.load(html);

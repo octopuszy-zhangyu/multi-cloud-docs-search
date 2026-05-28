@@ -3,18 +3,6 @@ const BASE_URL = "https://www.volcengine.com";
 export class VolcengineAdapter extends CloudDocAdapter {
     provider = "volcengine";
     name = "火山引擎";
-    async fetchJson(url) {
-        const res = await fetch(url, {
-            headers: {
-                "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
-                "Accept": "application/json",
-            },
-        });
-        if (!res.ok) {
-            throw new Error(`Fetch failed: ${res.status} ${res.statusText}`);
-        }
-        return res.json();
-    }
     async listProducts(options) {
         const url = `${BASE_URL}/api/doc/getLibList?Limit=999`;
         const raw = await this.fetchJson(url);
@@ -156,7 +144,7 @@ export class VolcengineAdapter extends CloudDocAdapter {
      * - GetTable: POST /anonymous-api/trade/price?Action=GetTable&Version=2020-01-01
      *   返回完整定价表格，每行包含 Product、ConfigurationCode、ChargeItemCode、PriceInfoList
      */
-    async getProductPrice(productId) {
+    async getProductPrice(productId, _options) {
         let prices = [];
         let source = `${BASE_URL}/pricing`;
         try {
@@ -168,7 +156,7 @@ export class VolcengineAdapter extends CloudDocAdapter {
                 if (!templateCode)
                     continue;
                 // 3. 调用 GetTable API 获取定价表格
-                const tableRes = await fetch(`${BASE_URL}/anonymous-api/trade/price?Action=GetTable&Version=2020-01-01`, {
+                const tableRes = await this.fetchWithRetry(`${BASE_URL}/anonymous-api/trade/price?Action=GetTable&Version=2020-01-01`, {
                     method: "POST",
                     headers: {
                         "Content-Type": "application/json",
@@ -291,7 +279,7 @@ export class VolcengineAdapter extends CloudDocAdapter {
      */
     async getTemplateCode(productCode) {
         const ssrUrl = `${BASE_URL}/pricing?product=${encodeURIComponent(productCode)}&tab=1&__loader=${encodeURIComponent("__ssr_without_user/pricing/page")}&__ssrDirect=true`;
-        const ssrRes = await fetch(ssrUrl, {
+        const ssrRes = await this.fetchWithRetry(ssrUrl, {
             headers: {
                 "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36",
                 "Accept": "application/json",

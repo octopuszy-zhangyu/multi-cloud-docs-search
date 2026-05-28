@@ -1,5 +1,5 @@
 import * as cheerio from "cheerio";
-import { CloudDocAdapter, type Product, type TocItem, type SearchResult, type PageMetadata, type PriceItem, type PriceResult, type PaginatedResult, type ListProductsOptions, type TocOptions } from "./base.js";
+import { CloudDocAdapter, type Product, type TocItem, type SearchResult, type PageMetadata, type PriceItem, type PriceResult, type PaginatedResult, type ListProductsOptions, type TocOptions, type PriceQueryOptions } from "./base.js";
 import { htmlToMarkdown } from "../utils/html-to-md.js";
 
 const SUPPORT_URL = "https://support.cucloud.cn";
@@ -36,22 +36,8 @@ export class CucloudAdapter extends CloudDocAdapter {
 
   private productListCache: ProductInfo[] | null = null;
 
-  private async fetchHtml(url: string): Promise<string> {
-    const res = await fetch(url, {
-      headers: {
-        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
-        "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
-        "Accept-Language": "zh-CN,zh;q=0.9,en;q=0.8",
-      },
-    });
-    if (!res.ok) {
-      throw new Error(`Fetch failed: ${res.status} ${res.statusText}`);
-    }
-    return res.text();
-  }
-
-  private async fetchJson<T>(url: string): Promise<T> {
-    const res = await fetch(url, {
+  private async fetchSearchApi<T>(url: string): Promise<T> {
+    const res = await this.fetchWithRetry(url, {
       headers: {
         "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36",
         "Accept": "application/json, text/plain, */*",
@@ -59,7 +45,7 @@ export class CucloudAdapter extends CloudDocAdapter {
       },
     });
     if (!res.ok) {
-      throw new Error(`Fetch failed: ${res.status} ${res.statusText}`);
+      throw new Error(`请求失败: ${res.status} ${res.statusText}`);
     }
     return res.json() as Promise<T>;
   }
@@ -73,7 +59,7 @@ export class CucloudAdapter extends CloudDocAdapter {
     for (const keyword of keywords) {
       const url = `${SEARCH_API}/product/queryAll?index=cms_document&pageNo=1&pageSize=20&keyword=${encodeURIComponent(keyword)}&referrer=${encodeURIComponent(SUPPORT_URL)}`;
       try {
-        const data = await this.fetchJson<SearchResponse>(url);
+        const data = await this.fetchSearchApi<SearchResponse>(url);
         if (data.data?.docList) {
           for (const doc of data.data.docList) {
             if (doc.product_id && doc.product_name && !productMap.has(doc.product_id)) {
@@ -151,7 +137,7 @@ export class CucloudAdapter extends CloudDocAdapter {
     for (const kw of keywords) {
       try {
         const url = `${SEARCH_API}/product/queryAll?index=cms_document&pageNo=1&pageSize=50&keyword=${encodeURIComponent(kw)}&productId=${productId}&referrer=${encodeURIComponent(SUPPORT_URL)}`;
-        data = await this.fetchJson<SearchResponse>(url);
+        data = await this.fetchSearchApi<SearchResponse>(url);
         if (data?.data?.docList && data.data.docList.length > 0) {
           break;
         }
@@ -219,7 +205,7 @@ export class CucloudAdapter extends CloudDocAdapter {
 
   async searchDocuments(productId: string, keyword: string): Promise<SearchResult[]> {
     const url = `${SEARCH_API}/product/queryAll?index=cms_document&pageNo=1&pageSize=50&keyword=${encodeURIComponent(keyword)}&productId=${productId}&referrer=${encodeURIComponent(SUPPORT_URL)}`;
-    const data = await this.fetchJson<SearchResponse>(url);
+    const data = await this.fetchSearchApi<SearchResponse>(url);
 
     if (!data.data?.docList) return [];
 
@@ -233,7 +219,7 @@ export class CucloudAdapter extends CloudDocAdapter {
   async getPageMetadata(pageId: string): Promise<PageMetadata> {
     // 通过搜索 API 搜索文档 ID 获取元信息
     const url = `${SEARCH_API}/product/queryAll?index=cms_document&pageNo=1&pageSize=1&keyword=${pageId}&referrer=${encodeURIComponent(SUPPORT_URL)}`;
-    const data = await this.fetchJson<SearchResponse>(url);
+    const data = await this.fetchSearchApi<SearchResponse>(url);
 
     if (data.data?.docList && data.data.docList.length > 0) {
       const doc = data.data.docList[0];
@@ -258,7 +244,7 @@ export class CucloudAdapter extends CloudDocAdapter {
 
     // 通过搜索 API 用 pageId 作为关键词获取文档内容
     const url = `${SEARCH_API}/product/queryAll?index=cms_document&pageNo=1&pageSize=50&keyword=${encodeURIComponent(pageId)}&referrer=${encodeURIComponent(SUPPORT_URL)}`;
-    const data = await this.fetchJson<SearchResponse>(url);
+    const data = await this.fetchSearchApi<SearchResponse>(url);
 
     if (data.data?.docList) {
       const doc = data.data.docList.find((d) => String(d.document_id) === pageId);
@@ -363,7 +349,7 @@ export class CucloudAdapter extends CloudDocAdapter {
     return prices;
   }
 
-  async getProductPrice(productId?: string): Promise<PriceResult> {
+  async getProductPrice(productId?: string, _options?: PriceQueryOptions): Promise<PriceResult> {
     const result: PriceResult = {
       provider: this.provider,
       name: this.name,
@@ -381,7 +367,7 @@ export class CucloudAdapter extends CloudDocAdapter {
       for (const keyword of priceKeywords) {
         try {
           const url = `${SEARCH_API}/product/queryAll?index=cms_document&pageNo=1&pageSize=10&keyword=${encodeURIComponent(keyword)}&productId=${productId}&referrer=${encodeURIComponent(SUPPORT_URL)}`;
-          const data = await this.fetchJson<SearchResponse>(url);
+          const data = await this.fetchSearchApi<SearchResponse>(url);
           if (data.data?.docList && data.data.docList.length > 0) {
             const doc = data.data.docList[0];
             const content = doc.content.replace(/<[^>]+>/g, "");
@@ -396,10 +382,82 @@ export class CucloudAdapter extends CloudDocAdapter {
           continue;
         }
       }
+
+      // If no structured price table found, try to extract daily unit prices from search results
+      if (result.prices.length === 0) {
+        const dailyPrices = await this.extractDailyUnitPrices(productId);
+        if (dailyPrices.length > 0) {
+          result.prices = dailyPrices;
+          result.source = "从搜索结果摘要中提取的按日单价";
+        }
+      }
     } catch {
       // Return empty prices if unable to fetch
     }
 
     return result;
+  }
+
+  /** 从搜索结果中提取按日单价 */
+  private async extractDailyUnitPrices(productId: string): Promise<PriceItem[]> {
+    const prices: PriceItem[] = [];
+
+    try {
+      // Search for ECS pricing with "日单价" keyword to find the actual pricing document
+      const keywords = ["日单价", "vcpu", "价格", "计费"];
+
+      for (const keyword of keywords) {
+        const url = `${SEARCH_API}/product/queryAll?index=cms_document&pageNo=1&pageSize=20&keyword=${encodeURIComponent(keyword)}&productId=${productId}&referrer=${encodeURIComponent(SUPPORT_URL)}`;
+        const data = await this.fetchSearchApi<SearchResponse>(url);
+
+        if (data.data?.docList && data.data.docList.length > 0) {
+          for (const doc of data.data.docList) {
+            const content = doc.content.replace(/<[^>]+>/g, "");
+
+            // Extract vCPU price - pattern: vcpu元/核按量（日）55.89
+            const vcpuMatch = content.match(/vcpu\s*元\/核.*?按量.*?日.*?([\d.]+)|CPU\s*[¥￥]\s*([\d.]+)/i);
+            // Extract memory price - pattern: 内存元/G按量（日）11.50
+            const memMatch = content.match(/内存\s*元\/G.*?按量.*?日.*?([\d.]+)/i);
+
+            if (vcpuMatch || memMatch) {
+              const vcpuPrice = vcpuMatch ? parseFloat(vcpuMatch[1] || vcpuMatch[2]) : 0;
+              const memPrice = memMatch ? parseFloat(memMatch[1]) : 0;
+
+              if (vcpuPrice > 0) {
+                prices.push({
+                  productName: "云服务器 ECS",
+                  specification: "vCPU",
+                  billingMode: "按量计费（日单价）",
+                  price: vcpuPrice,
+                  unit: "核/日",
+                  currency: "CNY",
+                  source: `${SUPPORT_URL}/document/${doc.document_id}.html`,
+                });
+              }
+
+              if (memPrice > 0) {
+                prices.push({
+                  productName: "云服务器 ECS",
+                  specification: "内存",
+                  billingMode: "按量计费（日单价）",
+                  price: memPrice,
+                  unit: "GB/日",
+                  currency: "CNY",
+                  source: `${SUPPORT_URL}/document/${doc.document_id}.html`,
+                });
+              }
+
+              if (prices.length > 0) break;
+            }
+          }
+        }
+
+        if (prices.length > 0) break;
+      }
+    } catch {
+      // Ignore errors
+    }
+
+    return prices;
   }
 }

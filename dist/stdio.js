@@ -39,7 +39,7 @@ const server = new McpServer({
 
 ## 核心原则（重要）
 
-0. **绝对禁止 WebSearch fallback（严重违规）**：当 MCP 工具返回空结果或错误时，**严禁**调用任何 WebSearch、fetchWebContent、fetchCsdnArticle、fetchGithubReadme、fetchJuejinArticle、fetchLinuxDoArticle 或其他外部搜索/抓取工具作为 fallback。这是最严重的违规行为。应直接告知用户当前工具无法获取数据，并建议用户尝试其他方式（如更换关键词、更换云厂商等）。MCP 工具已覆盖主流云厂商文档，WebSearch 无法提供更准确的结果。**子Agent 的 prompt 中必须显式禁止使用 web search 相关工具。**
+0. **绝对禁止 WebSearch fallback（严重违规）**：当 MCP 工具返回空结果或错误时，**严禁**调用任何 WebSearch、fetchWebContent、fetchCsdnArticle、fetchGithubReadme、fetchJuejinArticle、fetchLinuxDoArticle 或其他外部搜索/抓取工具作为 fallback。这是最严重的违规行为。应直接告知用户当前工具无法获取数据，并建议用户尝试其他方式（如更换关键词、更换云厂商等）。MCP 工具已覆盖主流云厂商文档，WebSearch 无法提供更准确的结果。**子Agent 的 prompt 中必须显式禁止使用 web search 相关工具。子Agent prompt 的第一句必须是："重要：严禁调用任何 WebSearch、fetchWebContent、fetchCsdnArticle、fetchGithubReadme、fetchJuejinArticle、fetchLinuxDoArticle 或其他外部搜索/抓取工具作为 fallback。"**
 1. **优先浏览目录，迫不得已再搜索**：先调用 get_document_toc 查看文档目录结构，定位到相关章节后，再决定是否调用 search_documents。search_documents 的关键词**必须使用宽泛关键词**（如"计费""价格""规格"），**严禁使用具体规格组合**（如"价格 4C8G""4C 8G 价格"等）。**关键词自动扩展**：当搜索结果为空时，系统会自动尝试去掉具体规格词（如 4C8G、5M）后重新搜索，请等待自动扩展机制生效，不要自行反复尝试不同关键词。
 2. **严格遵循 metadata → content 顺序**：必须先调用 get_page_metadata 获取 contentPath，再将 contentPath 传给 get_page_content。不能跳过 metadata 直接构造 URL。**contentPath 已统一为完整 URL 格式**，可直接传给 get_page_content。
 3. **并行 Agent 模式（重要）**：当需要查询多个云厂商时，必须为每个云厂商分别启动一个独立的 Agent 并行执行，而不是串行逐个查询。每个 Agent 负责一个云厂商的完整查询流程（list_products → get_document_toc → get_page_metadata → get_page_content），最后汇总所有 Agent 的结果。
@@ -60,14 +60,15 @@ const server = new McpServer({
 - Agent 2：查询腾讯云 CVM 价格（list_products → get_document_toc → 定位定价页面 → get_page_metadata → get_page_content）
 - 汇总两个 Agent 的结果进行对比
 
-### 子Agent 输出规范（重要）
+### 子Agent 输出规范（严格）
 当启动子Agent 执行查询时，子Agent 必须遵守以下输出规范：
 
-1. **只返回结构化 JSON 数据**：最终输出应为 JSON 格式，包含查询结果和关键信息
-2. **禁止输出中间思考过程**：不要输出"让我整理一下"、"现在我有了足够的信息"等中间思考过程
-3. **禁止重复表格**：同一个数据表格只输出一次
+1. **只返回结构化 JSON 数据**：最终输出必须为纯 JSON 格式，包含查询结果和关键信息
+2. **禁止输出任何中间思考过程**：严禁输出"让我整理一下"、"现在我有了足够的信息"、"让我看看"、"好的"、"首先"等中间思考过程文字。子Agent 的最终输出必须是一个纯 JSON 对象，不包含任何前缀、后缀、解释性文字
+3. **禁止重复数据**：同一个数据表格只输出一次
 4. **输出格式**：返回 JSON 格式数据，包含 provider、product、priceInfo、source、note 等字段
-5. **工具调用次数限制**：每个子Agent 的工具调用次数应控制在 15 次以内。如果超过 15 次仍未获取到数据，应停止并报告失败原因
+5. **工具调用次数限制（硬性限制）**：每个子Agent 的工具调用次数**必须控制在 15 次以内**。如果超过 15 次仍未获取到数据，必须立即停止并返回 JSON 格式的失败报告（包含 provider、product、error、reason 字段）。**超过 15 次调用仍未停止视为违规。**
+6. **提前终止策略**：如果连续 3 次工具调用都返回空结果或错误，应判断该路径不可行，立即切换策略或停止，而不是继续尝试
 
 ### 需要规划时使用 Plan 模式
 当任务涉及以下场景时，先调用 EnterPlanMode 进入规划模式：
@@ -131,18 +132,24 @@ const server = new McpServer({
 - **百度云 BCC 价格**：文档引用外部定价页面（cloud.baidu.com/publicity/bccplus.html），文档内无具体价格数字
 - **联通云 ECS 价格**：文档只有按日单价（vCPU ¥55.89/核/日, 内存 ¥11.50/GB/日），没有包月/包年价格
 
+**已知数据缺失的厂商（无需遍历目录，直接返回提示）**：
+- **华为云 ECS**：定价数据位于外部页面 huaweicloud.com/pricing，文档系统中无具体价格。调用 get_product_price_quick 获取价格计算器 URL 后即可返回，无需遍历目录或搜索文档。如果 get_product_price 返回空，直接告知用户使用官网价格计算器。
+- **阿里云 ECS**：文档中只有计费模式说明，无具体实例价格。调用 get_product_price_quick 获取计费说明 URL 后即可返回。如需具体价格，告知用户访问 aliyun.com/price。
+- **百度云 BCC**：定价页面在外部（cloud.baidu.com/publicity/bccplus.html），文档中无具体价格。调用 get_product_price_quick 获取 URL 后即可返回。
+- **联通云 ECS**：定价页面返回 404，只能从搜索摘要中提取按日单价。调用 get_product_price_quick 后直接搜索"价格"关键词获取摘要即可，无需遍历目录。
+
 **ECS/CVM 4C8G 价格查询速查（必须按此顺序）**：
 
-| 厂商 | 首选方式 | 备选方式 | 说明 |
-|------|---------|---------|------|
-| 天翼云 | get_product_price(provider="ctyun", productId="10027004") | get_product_price_quick | 文档含价格表 |
-| 火山引擎 | get_product_price(provider="volcengine", productId="ECS") | get_product_price_quick | GetTable API 返回完整定价表格 |
-| 腾讯云 | **get_product_price(provider="tencent", productId="cvm")** | get_product_price_quick | workbench API 返回全量 CVM 实例价格 |
-| 阿里云 | get_product_price_quick(provider="aliyun", productId="ecs") | get_product_price | 文档无价格表，需访问官网定价页 |
-| 华为云 | get_product_price(provider="huawei", productId="ecs") | get_product_price_quick | 价格计算器 API 返回标准定价 |
-| 移动云 | get_product_price(provider="ecloud", productId="706") | search_documents | 文档含价格信息 |
-| 联通云 | get_product_price_quick(provider="cucloud", productId="128") | search_documents | 文档含按日单价 |
-| 百度云 | get_product_price_quick(provider="baidu", productId="bcc") | search_documents | 文档引用外部定价页 |
+| 厂商 | 首选方式 | 备选方式 | 说明 | 预期工具调用次数 |
+|------|---------|---------|------|----------------|
+| 天翼云 | get_product_price(provider="ctyun", productId="10027004") | get_product_price_quick | 文档含价格表 | 2-3 次 |
+| 火山引擎 | get_product_price(provider="volcengine", productId="ECS") | get_product_price_quick | GetTable API 返回完整定价表格 | 2-3 次 |
+| 腾讯云 | **get_product_price(provider="tencent", productId="cvm")** | get_product_price_quick | workbench API 返回全量 CVM 实例价格 | 2-3 次 |
+| 阿里云 | get_product_price_quick(provider="aliyun", productId="ecs") | get_product_price | 文档无价格表，需访问官网定价页。**无需遍历目录** | 1-2 次 |
+| 华为云 | get_product_price(provider="huawei", productId="ecs") | get_product_price_quick | 价格计算器 API 返回标准定价。**如果返回空，直接告知用户使用官网价格计算器** | 2-3 次 |
+| 移动云 | get_product_price(provider="ecloud", productId="706") | search_documents | 文档含价格信息 | 3-5 次 |
+| 联通云 | get_product_price_quick(provider="cucloud", productId="128") | search_documents | 文档含按日单价。**定价页面 404，从搜索摘要提取** | 3-5 次 |
+| 百度云 | get_product_price_quick(provider="baidu", productId="bcc") | search_documents | 文档引用外部定价页。**无需遍历目录** | 1-2 次 |
 
 **必须使用 get_product_price 获取价格的厂商**：腾讯云、天翼云、火山引擎、华为云、阿里云（通过 get_product_price_quick 获取 URL 后访问）。
 
@@ -562,16 +569,51 @@ server.registerTool("get_page_metadata", {
     }
 });
 server.registerTool("get_product_price", {
-    description: "获取指定云厂商的产品价格信息。不传 productId 则返回所有产品价格概览。支持精确价格的厂商：腾讯云 CVM（productId 传 \"cvm\" 或 \"213\"）、天翼云云电脑（productId 传 \"10027004\"）、AI 厂商（DeepSeek、MiniMax、Kimi、百炼）。阿里云、华为云文档不含精确价格，需使用官网价格计算器。如需快速获取定价页面 URL，请使用 get_product_price_quick 工具",
+    description: "获取指定云厂商的产品价格信息。不传 productId 则返回所有产品价格概览。支持精确价格的厂商：腾讯云 CVM（productId 传 \"cvm\" 或 \"213\"）、天翼云云电脑（productId 传 \"10027004\"）、AI 厂商（DeepSeek、MiniMax、Kimi、百炼）。阿里云、华为云文档不含精确价格，需使用官网价格计算器。如需快速获取定价页面 URL，请使用 get_product_price_quick 工具。支持分页（page/pageSize）和关键词过滤（keyword）",
     inputSchema: z.object({
         provider: z.string().describe("云厂商标识"),
         productId: z.string().optional().describe("产品 ID（可选，不传则返回所有产品价格概览）。腾讯云传 \"cvm\" 或 \"213\"，天翼云传 \"10027004\"（云电脑）或 \"11061839\"（Token 服务）"),
+        page: z.number().optional().describe("页码，默认 1"),
+        pageSize: z.number().optional().describe("每页条数，默认 100，最大 500"),
+        keyword: z.string().optional().describe("关键词过滤（如规格型号 's6.large'、计费模式 '按量'、地域 '华北' 等），支持模糊匹配"),
     }).strict(),
-}, async ({ provider, productId }) => {
+}, async ({ provider, productId, page, pageSize, keyword }) => {
     try {
         const adapter = getAdapter(provider);
-        const result = await adapter.getProductPrice(productId);
-        return { content: [{ type: "text", text: JSON.stringify(result, null, 2) }] };
+        const result = await adapter.getProductPrice(productId, { page, pageSize, keyword });
+        // 应用分页和过滤（如果适配器未处理）
+        let prices = result.prices || [];
+        const total = result.total || prices.length;
+        const currentPage = result.page || page || 1;
+        const currentPageSize = result.pageSize || pageSize || 100;
+        // 如果适配器返回了完整数据但没有分页，在此处处理
+        if (!result.hasMore && prices.length > 0 && (page || pageSize || keyword)) {
+            // 关键词过滤
+            if (keyword) {
+                const lowerKeyword = keyword.toLowerCase();
+                prices = prices.filter(p => p.specification?.toLowerCase().includes(lowerKeyword) ||
+                    p.productName?.toLowerCase().includes(lowerKeyword) ||
+                    p.region?.toLowerCase().includes(lowerKeyword) ||
+                    p.billingMode?.toLowerCase().includes(lowerKeyword));
+            }
+            // 分页
+            const start = ((page || 1) - 1) * (pageSize || 100);
+            const end = start + (pageSize || 100);
+            prices = prices.slice(start, end);
+        }
+        return {
+            content: [{
+                    type: "text",
+                    text: JSON.stringify({
+                        ...result,
+                        prices,
+                        total,
+                        page: currentPage,
+                        pageSize: currentPageSize,
+                        hasMore: (page || 1) * (pageSize || 100) < total,
+                    }, null, 2),
+                }],
+        };
     }
     catch (error) {
         return {
@@ -604,7 +646,10 @@ server.registerTool("get_product_price_quick", {
                 "11061839": [{ url: "https://www.ctyun.cn/document/11061839", description: "Token 服务价格" }],
             },
             "aliyun": {
-                "ecs": [{ url: "https://help.aliyun.com/zh/ecs/billing", description: "云服务器 ECS 计费说明（文档中无具体价格表，需访问 aliyun.com/price）" }],
+                "ecs": [
+                    { url: "https://help.aliyun.com/zh/ecs/billing", description: "云服务器 ECS 计费说明（仅含计费模式说明，无具体实例价格）" },
+                    { url: "https://www.aliyun.com/price/product", description: "阿里云官网定价计算器（选择地域和实例规格后查询实时价格）" },
+                ],
             },
             "tencent": {
                 "cvm": [{ url: "https://buy.cloud.tencent.com/price/cvm/overview", description: "云服务器 CVM 价格概览" }],
@@ -634,12 +679,18 @@ server.registerTool("get_product_price_quick", {
             },
             "baidu": {
                 "BML": [{ url: "https://cloud.baidu.com/doc/BML/s/9kq7tfy4p", description: "BML 全功能AI开发平台价格" }],
+                "BCC": [
+                    { url: "https://cloud.baidu.com/publicity/bccplus.html", description: "百度云 BCC 价格详情（外部页面，文档中无具体价格）" },
+                    { url: "https://cloud.baidu.com/doc/BCC/index.html", description: "百度云 BCC 文档首页（仅含计费模式说明，无具体实例价格）" },
+                ],
             },
             "glm": {
                 "bigmodel": [{ url: "https://open.bigmodel.cn/pricing", description: "智谱 GLM 定价" }],
             },
             "cucloud": {
-                "128": [{ url: "https://support.cucloud.cn/document/128", description: "云服务器 ECS 价格" }],
+                "128": [
+                    { url: "https://support.cucloud.cn/document/128", description: "云服务器 ECS 价格（注意：定价页面返回 404，价格信息需从搜索摘要中提取）" },
+                ],
                 "2357": [{ url: "https://support.cucloud.cn/document/2357", description: "AI服务平台 AISP 价格" }],
             },
         };

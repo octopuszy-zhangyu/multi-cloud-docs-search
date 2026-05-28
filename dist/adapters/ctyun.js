@@ -4,20 +4,9 @@ const BASE_URL = "https://www.ctyun.cn";
 export class CtyunAdapter extends CloudDocAdapter {
     provider = "ctyun";
     name = "天翼云";
-    async request(url) {
-        const res = await fetch(url, {
-            headers: {
-                "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
-            },
-        });
-        if (!res.ok) {
-            throw new Error(`API request failed: ${res.status} ${res.statusText}`);
-        }
-        return res.json();
-    }
     async listProducts(options) {
         const url = `${BASE_URL}/v2/portal/book/ListForHelp?bookClassDomain=product&_t=${Date.now()}`;
-        const raw = await this.request(url);
+        const raw = await this.fetchJson(url);
         let result = [];
         for (const cat of raw.data?.list ?? []) {
             for (const p of cat.list) {
@@ -34,12 +23,7 @@ export class CtyunAdapter extends CloudDocAdapter {
         return this.paginate(result, page, pageSize);
     }
     async getDocumentToc(productId, options) {
-        const res = await fetch(`${BASE_URL}/document/${productId}/`, {
-            headers: {
-                "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
-            },
-        });
-        const html = await res.text();
+        const html = await this.fetchHtml(`${BASE_URL}/document/${productId}/`);
         const $ = cheerio.load(html);
         let items = [];
         const linkPattern = new RegExp(`^/document/${productId}/(\\d+)$`);
@@ -64,7 +48,7 @@ export class CtyunAdapter extends CloudDocAdapter {
     }
     async searchDocuments(productId, keyword) {
         const url = `${BASE_URL}/v2/portal/book/ContentQuery?bookId=${productId}&keyword=${encodeURIComponent(keyword)}&_t=${Date.now()}`;
-        const raw = await this.request(url);
+        const raw = await this.fetchJson(url);
         return (raw.data?.pages ?? []).map((p) => ({
             pageId: p.pageId,
             title: p.title,
@@ -73,7 +57,7 @@ export class CtyunAdapter extends CloudDocAdapter {
     }
     async getPageMetadata(pageId) {
         const url = `${BASE_URL}/v2/portal/book/page/Get?pageId=${pageId}&_t=${Date.now()}`;
-        const raw = await this.request(url);
+        const raw = await this.fetchJson(url);
         const d = raw.data;
         return {
             pageId: d.pageId,
@@ -86,7 +70,7 @@ export class CtyunAdapter extends CloudDocAdapter {
         };
     }
     async getPageContent(contentPath) {
-        const res = await fetch(contentPath, {
+        const res = await this.fetchWithRetry(contentPath, {
             headers: {
                 "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
             },
@@ -230,7 +214,7 @@ export class CtyunAdapter extends CloudDocAdapter {
      * 通过搜索产品文档中的"价格"、"计费"相关页面，
      * 获取页面内容并解析价格表格。
      */
-    async getProductPrice(productId) {
+    async getProductPrice(productId, _options) {
         const result = {
             provider: this.provider,
             name: this.name,

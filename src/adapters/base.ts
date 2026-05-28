@@ -52,6 +52,17 @@ export interface PriceResult {
   updateDate?: string;
   message?: string;
   note?: string;
+  total?: number;
+  page?: number;
+  pageSize?: number;
+  hasMore?: boolean;
+}
+
+/** 价格查询选项 */
+export interface PriceQueryOptions {
+  page?: number;
+  pageSize?: number;
+  keyword?: string;
 }
 
 /** 分页结果包装 */
@@ -76,6 +87,12 @@ export interface TocOptions {
   pageSize?: number;
   topOnly?: boolean;
 }
+
+/** 默认请求头 */
+const DEFAULT_HEADERS: Record<string, string> = {
+  "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+  "Accept-Language": "zh-CN,zh;q=0.9,en;q=0.8",
+};
 
 /** 云厂商文档适配器抽象基类 */
 export abstract class CloudDocAdapter {
@@ -111,6 +128,42 @@ export abstract class CloudDocAdapter {
     throw new Error("Unreachable");
   }
 
+  /** 获取 HTML 文本 */
+  protected async fetchHtml(url: string): Promise<string> {
+    const res = await this.fetchWithRetry(url, {
+      headers: { ...DEFAULT_HEADERS, "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8" },
+    });
+    if (res.status === 404) {
+      throw new Error(`页面不存在 (404): ${url}`);
+    }
+    if (!res.ok) {
+      throw new Error(`请求失败: ${res.status} ${res.statusText} — ${url}`);
+    }
+    return res.text();
+  }
+
+  /** 获取 JSON 数据 */
+  protected async fetchJson<T>(url: string): Promise<T> {
+    const res = await this.fetchWithRetry(url, {
+      headers: { ...DEFAULT_HEADERS, "Accept": "application/json" },
+    });
+    if (!res.ok) {
+      throw new Error(`请求失败: ${res.status} ${res.statusText} — ${url}`);
+    }
+    return res.json() as Promise<T>;
+  }
+
+  /** 获取纯文本内容 */
+  protected async fetchText(url: string): Promise<string> {
+    const res = await this.fetchWithRetry(url, {
+      headers: { ...DEFAULT_HEADERS, "Accept": "text/plain,text/html,*/*" },
+    });
+    if (!res.ok) {
+      throw new Error(`请求失败: ${res.status} ${res.statusText} — ${url}`);
+    }
+    return res.text();
+  }
+
   /** 获取所有产品文档列表 */
   abstract listProducts(options?: ListProductsOptions): Promise<Product[] | PaginatedResult<Product>>;
 
@@ -127,5 +180,5 @@ export abstract class CloudDocAdapter {
   abstract getPageContent(contentPath: string): Promise<string>;
 
   /** 获取产品价格信息 */
-  abstract getProductPrice(productId?: string): Promise<PriceResult>;
+  abstract getProductPrice(productId?: string, options?: PriceQueryOptions): Promise<PriceResult>;
 }

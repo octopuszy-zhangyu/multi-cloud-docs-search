@@ -4,7 +4,7 @@ import type {
   ContentQueryResponse,
   PageMetadataResponse,
 } from "../types.js";
-import { CloudDocAdapter, type Product, type TocItem, type SearchResult, type PageMetadata, type PriceItem, type PriceResult, type PaginatedResult, type ListProductsOptions, type TocOptions } from "./base.js";
+import { CloudDocAdapter, type Product, type TocItem, type SearchResult, type PageMetadata, type PriceItem, type PriceResult, type PaginatedResult, type ListProductsOptions, type TocOptions, type PriceQueryOptions } from "./base.js";
 
 const BASE_URL = "https://www.ctyun.cn";
 
@@ -12,22 +12,9 @@ export class CtyunAdapter extends CloudDocAdapter {
   readonly provider = "ctyun";
   readonly name = "天翼云";
 
-  private async request<T>(url: string): Promise<T> {
-    const res = await fetch(url, {
-      headers: {
-        "User-Agent":
-          "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
-      },
-    });
-    if (!res.ok) {
-      throw new Error(`API request failed: ${res.status} ${res.statusText}`);
-    }
-    return res.json() as Promise<T>;
-  }
-
   async listProducts(options?: ListProductsOptions): Promise<PaginatedResult<Product>> {
     const url = `${BASE_URL}/v2/portal/book/ListForHelp?bookClassDomain=product&_t=${Date.now()}`;
-    const raw = await this.request<ListForHelpResponse>(url);
+    const raw = await this.fetchJson<ListForHelpResponse>(url);
     let result: Product[] = [];
     for (const cat of raw.data?.list ?? []) {
       for (const p of cat.list) {
@@ -45,13 +32,7 @@ export class CtyunAdapter extends CloudDocAdapter {
   }
 
   async getDocumentToc(productId: string, options?: TocOptions): Promise<PaginatedResult<TocItem>> {
-    const res = await fetch(`${BASE_URL}/document/${productId}/`, {
-      headers: {
-        "User-Agent":
-          "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
-      },
-    });
-    const html = await res.text();
+    const html = await this.fetchHtml(`${BASE_URL}/document/${productId}/`);
     const $ = cheerio.load(html);
     let items: TocItem[] = [];
     const linkPattern = new RegExp(`^/document/${productId}/(\\d+)$`);
@@ -81,7 +62,7 @@ export class CtyunAdapter extends CloudDocAdapter {
 
   async searchDocuments(productId: string, keyword: string): Promise<SearchResult[]> {
     const url = `${BASE_URL}/v2/portal/book/ContentQuery?bookId=${productId}&keyword=${encodeURIComponent(keyword)}&_t=${Date.now()}`;
-    const raw = await this.request<ContentQueryResponse>(url);
+    const raw = await this.fetchJson<ContentQueryResponse>(url);
     return (raw.data?.pages ?? []).map((p) => ({
       pageId: p.pageId,
       title: p.title,
@@ -91,7 +72,7 @@ export class CtyunAdapter extends CloudDocAdapter {
 
   async getPageMetadata(pageId: string): Promise<PageMetadata> {
     const url = `${BASE_URL}/v2/portal/book/page/Get?pageId=${pageId}&_t=${Date.now()}`;
-    const raw = await this.request<PageMetadataResponse>(url);
+    const raw = await this.fetchJson<PageMetadataResponse>(url);
     const d = raw.data;
     return {
       pageId: d.pageId,
@@ -105,7 +86,7 @@ export class CtyunAdapter extends CloudDocAdapter {
   }
 
   async getPageContent(contentPath: string): Promise<string> {
-    const res = await fetch(contentPath, {
+    const res = await this.fetchWithRetry(contentPath, {
       headers: {
         "User-Agent":
           "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
@@ -259,7 +240,7 @@ export class CtyunAdapter extends CloudDocAdapter {
    * 通过搜索产品文档中的"价格"、"计费"相关页面，
    * 获取页面内容并解析价格表格。
    */
-  async getProductPrice(productId?: string): Promise<PriceResult> {
+  async getProductPrice(productId?: string, _options?: PriceQueryOptions): Promise<PriceResult> {
     const result: PriceResult = {
       provider: this.provider,
       name: this.name,

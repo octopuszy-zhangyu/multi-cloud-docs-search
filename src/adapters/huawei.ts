@@ -1,5 +1,5 @@
 import * as cheerio from "cheerio";
-import { CloudDocAdapter, type Product, type TocItem, type SearchResult, type PageMetadata, type PriceItem, type PriceResult, type TocOptions } from "./base.js";
+import { CloudDocAdapter, type Product, type TocItem, type SearchResult, type PageMetadata, type PriceItem, type PriceResult, type TocOptions, type PriceQueryOptions } from "./base.js";
 import { htmlToMarkdown } from "../utils/html-to-md.js";
 
 const BASE_URL = "https://support.huaweicloud.com";
@@ -24,25 +24,8 @@ export class HuaweiAdapter extends CloudDocAdapter {
   readonly provider = "huawei";
   readonly name = "华为云";
 
-  private async fetchHtml(url: string): Promise<string> {
-    const res = await fetch(url, {
-      headers: {
-        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
-        "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
-        "Accept-Language": "zh-CN,zh;q=0.9,en;q=0.8",
-      },
-    });
-    if (res.status === 404) {
-      throw new Error(`页面不存在 (404): ${url}。该文档页面可能已被移除或 URL 映射错误`);
-    }
-    if (!res.ok) {
-      throw new Error(`Fetch failed: ${res.status} ${res.statusText} — ${url}`);
-    }
-    return res.text();
-  }
-
-  private async fetchJson<T>(url: string): Promise<T> {
-    const res = await fetch(url, {
+  private async fetchPortalApi<T>(url: string): Promise<T> {
+    const res = await this.fetchWithRetry(url, {
       headers: {
         "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
         "Accept": "application/json",
@@ -50,13 +33,13 @@ export class HuaweiAdapter extends CloudDocAdapter {
       },
     });
     if (!res.ok) {
-      throw new Error(`Fetch failed: ${res.status} ${res.statusText}`);
+      throw new Error(`请求失败: ${res.status} ${res.statusText}`);
     }
     return res.json() as Promise<T>;
   }
 
   async listProducts(): Promise<Product[]> {
-    const data = await this.fetchJson<{ data: HuaweiCategory[] }>(PRODUCTS_API);
+    const data = await this.fetchPortalApi<{ data: HuaweiCategory[] }>(PRODUCTS_API);
     const products: Product[] = [];
     const seen = new Set<string>();
 
@@ -233,16 +216,24 @@ export class HuaweiAdapter extends CloudDocAdapter {
    * - export/productlist: POST /api/calculator/.../export/productlist — 全量价格导出
    * - productInfo: GET /api/calculator/.../productInfo — 产品配置和价格详情
    */
-  async getProductPrice(productId?: string): Promise<PriceResult> {
+  async getProductPrice(productId?: string, options?: PriceQueryOptions): Promise<PriceResult> {
     const name = this.name;
-    let source = "https://www.huaweicloud.com/pricing/calculator.html";
+    const calculatorUrl = "https://www.huaweicloud.com/pricing/calculator.html";
+    let source = calculatorUrl;
     let prices: PriceItem[] = [];
+    let note = "";
 
     try {
       // 1. 获取产品菜单，找到 urlPath
       const menuData = await this.fetchCalculatorApi<{ menuInfos: any[] }>("menuInfo", { sign: "common", language: "zh-cn" });
       if (!menuData?.menuInfos) {
-        return { provider: this.provider, name, prices, source };
+        return {
+          provider: this.provider,
+          name,
+          prices,
+          source,
+          note: "华为云价格数据位于外部价格计算器页面，文档系统中不包含具体价格。请访问华为云官网价格计算器查询实时价格。",
+        };
       }
 
       // 扁平化所有产品
@@ -286,7 +277,7 @@ export class HuaweiAdapter extends CloudDocAdapter {
       }
 
       if (prices.length > 0) {
-        source = "https://www.huaweicloud.com/pricing/calculator.html";
+        source = calculatorUrl;
       }
     } catch (error) {
       console.error("获取华为云价格信息失败:", error);
@@ -297,11 +288,48 @@ export class HuaweiAdapter extends CloudDocAdapter {
       prices = await this.fallbackParsePrice(productId);
     }
 
+    // 当价格数据为空时，提供明确的引导信息
+    if (prices.length === 0) {
+      if (productId === "ecs") {
+        note = "华为云 ECS 定价数据位于外部价格计算器页面（www.huaweicloud.com/pricing），未收录于 support.huaweicloud.com 的文档系统中。文档中只有计费模式说明和规格描述，不包含具体实例价格。请直接访问华为云官网价格计算器查询实时 ECS 价格。";
+        source = `${calculatorUrl}#/ecs`;
+      } else if (productId) {
+        note = `华为云产品 "${productId}" 的价格数据位于外部价格计算器页面，文档系统中不包含具体价格。请访问华为云官网价格计算器查询实时价格。`;
+        source = `${calculatorUrl}?productCode=${productId}`;
+      } else {
+        note = "华为云价格数据位于外部价格计算器页面，文档系统中不包含具体价格。请访问华为云官网价格计算器查询实时价格。";
+      }
+    }
+
+    // 应用关键词过滤
+    if (options?.keyword && prices.length > 0) {
+      const lowerKeyword = options.keyword.toLowerCase();
+      prices = prices.filter(p =>
+        p.specification?.toLowerCase().includes(lowerKeyword) ||
+        p.productName?.toLowerCase().includes(lowerKeyword) ||
+        p.region?.toLowerCase().includes(lowerKeyword) ||
+        p.billingMode?.toLowerCase().includes(lowerKeyword)
+      );
+    }
+
+    // 应用分页
+    const total = prices.length;
+    const page = options?.page || 1;
+    const pageSize = options?.pageSize || 100;
+    const start = (page - 1) * pageSize;
+    const end = start + pageSize;
+    const pagedPrices = prices.slice(start, end);
+
     return {
       provider: this.provider,
       name,
-      prices,
+      prices: pagedPrices,
       source,
+      note,
+      total,
+      page,
+      pageSize,
+      hasMore: end < total,
     };
   }
 
@@ -312,7 +340,7 @@ export class HuaweiAdapter extends CloudDocAdapter {
     const query = new URLSearchParams(params).toString();
     const url = `${CALCULATOR_API}/${action}?${query}`;
 
-    const res = await fetch(url, {
+    const res = await this.fetchWithRetry(url, {
       headers: {
         "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36",
         "Accept": "application/json",
@@ -328,7 +356,7 @@ export class HuaweiAdapter extends CloudDocAdapter {
    * 调用 export/productlist API 获取全量价格
    */
   private async exportProductList(urlPath: string): Promise<Record<string, any[]> | null> {
-    const res = await fetch(`${CALCULATOR_API}/export/productlist`, {
+    const res = await this.fetchWithRetry(`${CALCULATOR_API}/export/productlist`, {
       method: "POST",
       headers: {
         "accept": "application/json, text/plain, */*",

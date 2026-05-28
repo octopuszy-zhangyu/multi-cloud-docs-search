@@ -1,4 +1,4 @@
-import { CloudDocAdapter, type Product, type TocItem, type SearchResult, type PageMetadata, type PriceItem, type PriceResult, type PaginatedResult, type ListProductsOptions, type TocOptions } from "./base.js";
+import { CloudDocAdapter, type Product, type TocItem, type SearchResult, type PageMetadata, type PriceItem, type PriceResult, type PaginatedResult, type ListProductsOptions, type TocOptions, type PriceQueryOptions } from "./base.js";
 
 const BASE_URL = "https://www.volcengine.com";
 
@@ -70,19 +70,6 @@ interface GetDocDetailResponse {
 export class VolcengineAdapter extends CloudDocAdapter {
   readonly provider = "volcengine";
   readonly name = "火山引擎";
-
-  private async fetchJson<T>(url: string): Promise<T> {
-    const res = await fetch(url, {
-      headers: {
-        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
-        "Accept": "application/json",
-      },
-    });
-    if (!res.ok) {
-      throw new Error(`Fetch failed: ${res.status} ${res.statusText}`);
-    }
-    return res.json() as Promise<T>;
-  }
 
   async listProducts(options?: ListProductsOptions): Promise<PaginatedResult<Product>> {
     const url = `${BASE_URL}/api/doc/getLibList?Limit=999`;
@@ -249,7 +236,7 @@ export class VolcengineAdapter extends CloudDocAdapter {
    * - GetTable: POST /anonymous-api/trade/price?Action=GetTable&Version=2020-01-01
    *   返回完整定价表格，每行包含 Product、ConfigurationCode、ChargeItemCode、PriceInfoList
    */
-  async getProductPrice(productId?: string): Promise<PriceResult> {
+  async getProductPrice(productId?: string, _options?: PriceQueryOptions): Promise<PriceResult> {
     let prices: PriceItem[] = [];
     let source = `${BASE_URL}/pricing`;
 
@@ -263,7 +250,7 @@ export class VolcengineAdapter extends CloudDocAdapter {
         if (!templateCode) continue;
 
         // 3. 调用 GetTable API 获取定价表格
-        const tableRes = await fetch(
+        const tableRes = await this.fetchWithRetry(
           `${BASE_URL}/anonymous-api/trade/price?Action=GetTable&Version=2020-01-01`,
           {
             method: "POST",
@@ -406,7 +393,7 @@ export class VolcengineAdapter extends CloudDocAdapter {
   private async getTemplateCode(productCode: string): Promise<string | null> {
     const ssrUrl = `${BASE_URL}/pricing?product=${encodeURIComponent(productCode)}&tab=1&__loader=${encodeURIComponent("__ssr_without_user/pricing/page")}&__ssrDirect=true`;
 
-    const ssrRes = await fetch(ssrUrl, {
+    const ssrRes = await this.fetchWithRetry(ssrUrl, {
       headers: {
         "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36",
         "Accept": "application/json",

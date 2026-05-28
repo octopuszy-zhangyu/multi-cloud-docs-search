@@ -17,30 +17,6 @@ export class GlmAdapter extends CloudDocAdapter {
     name = "智谱 GLM";
     llmsEntriesCache = null;
     llmsFullContentCache = null;
-    async fetchText(url) {
-        const res = await fetch(url, {
-            headers: {
-                "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
-                Accept: "text/plain",
-            },
-        });
-        if (!res.ok) {
-            throw new Error(`Fetch failed: ${res.status} ${res.statusText}`);
-        }
-        return res.text();
-    }
-    async fetchHtml(url) {
-        const res = await fetch(url, {
-            headers: {
-                "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
-                Accept: "text/html",
-            },
-        });
-        if (!res.ok) {
-            throw new Error(`Fetch failed: ${res.status} ${res.statusText}`);
-        }
-        return res.text();
-    }
     /**
      * 解析 llms.txt，提取所有文档条目
      *
@@ -266,7 +242,7 @@ export class GlmAdapter extends CloudDocAdapter {
         }
         return prices;
     }
-    async getProductPrice(productId) {
+    async getProductPrice(productId, _options) {
         // 先尝试从 llms-full.txt 中查找定价相关内容
         try {
             const fullContent = await this.getLlmsFullContent();

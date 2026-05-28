@@ -1,4 +1,4 @@
-import { CloudDocAdapter, type Product, type TocItem, type SearchResult, type PageMetadata, type PriceItem, type PriceResult, type PaginatedResult, type ListProductsOptions, type TocOptions } from "./base.js";
+import { CloudDocAdapter, type Product, type TocItem, type SearchResult, type PageMetadata, type PriceItem, type PriceResult, type PaginatedResult, type ListProductsOptions, type TocOptions, type PriceQueryOptions } from "./base.js";
 
 const BASE_URL = "https://platform.minimaxi.com";
 const LLMS_URL = `${BASE_URL}/docs/llms.txt`;
@@ -7,19 +7,6 @@ const LLMS_URL = `${BASE_URL}/docs/llms.txt`;
 export class MinimaxAdapter extends CloudDocAdapter {
   readonly provider = "minimax";
   readonly name = "MiniMax";
-
-  private async fetchText(url: string): Promise<string> {
-    const res = await fetch(url, {
-      headers: {
-        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
-        "Accept": "text/plain,text/markdown,*/*",
-      },
-    });
-    if (!res.ok) {
-      throw new Error(`Fetch failed: ${res.status} ${res.statusText}`);
-    }
-    return res.text();
-  }
 
   private filterByKeywords<T extends { name?: string; title?: string }>(items: T[], keyword?: string): T[] {
     if (!keyword) return items;
@@ -251,7 +238,7 @@ export class MinimaxAdapter extends CloudDocAdapter {
     return prices;
   }
 
-  async getProductPrice(productId?: string): Promise<PriceResult> {
+  async getProductPrice(productId?: string, _options?: PriceQueryOptions): Promise<PriceResult> {
     const url = `${BASE_URL}/docs/guides/pricing-paygo.md`;
     const markdown = await this.fetchText(url);
     const prices = this.parsePriceTable(markdown);

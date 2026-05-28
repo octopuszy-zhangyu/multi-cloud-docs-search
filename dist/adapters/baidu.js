@@ -5,19 +5,6 @@ const BASE_URL = "https://cloud.baidu.com";
 export class BaiduAdapter extends CloudDocAdapter {
     provider = "baidu";
     name = "百度云";
-    async fetchHtml(url) {
-        const res = await fetch(url, {
-            headers: {
-                "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
-                "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
-                "Accept-Language": "zh-CN,zh;q=0.9,en;q=0.8",
-            },
-        });
-        if (!res.ok) {
-            throw new Error(`Fetch failed: ${res.status} ${res.statusText}`);
-        }
-        return res.text();
-    }
     async listProducts(options) {
         const url = `${BASE_URL}/doc/index.html`;
         const html = await this.fetchHtml(url);
@@ -179,7 +166,7 @@ export class BaiduAdapter extends CloudDocAdapter {
             hasMore: start + pageSize < items.length,
         };
     }
-    async getProductPrice(productId) {
+    async getProductPrice(productId, _options) {
         const prices = [];
         if (productId) {
             // 先通过 searchDocuments 搜索"价格"关键词，定位定价页面
@@ -231,6 +218,17 @@ export class BaiduAdapter extends CloudDocAdapter {
                     }
                 }
             }
+        }
+        // 对于 BCC 产品，如果文档中未找到具体价格，添加明确的提示信息
+        if (prices.length === 0 && productId === "BCC") {
+            return {
+                provider: this.provider,
+                name: this.name,
+                prices: [],
+                source: `${BASE_URL}/publicity/bccplus.html`,
+                updateDate: undefined,
+                note: "百度云 BCC 文档中无具体实例价格。预付费定价和后付费定价页面均指向外部「BCC价格详情」页面（cloud.baidu.com/publicity/bccplus.html），该页面包含完整的实例规格定价（含裸实例价格）。请访问该外部页面获取具体价格，或使用 get_product_price_quick({ provider: \"baidu\", productId: \"BCC\" }) 获取定价页面 URL。",
+            };
         }
         return {
             provider: this.provider,

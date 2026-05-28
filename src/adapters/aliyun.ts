@@ -1,5 +1,5 @@
 import * as cheerio from "cheerio";
-import { CloudDocAdapter, type Product, type TocItem, type SearchResult, type PageMetadata, type PriceItem, type PriceResult, type TocOptions } from "./base.js";
+import { CloudDocAdapter, type Product, type TocItem, type SearchResult, type PageMetadata, type PriceItem, type PriceResult, type TocOptions, type PriceQueryOptions } from "./base.js";
 import { htmlToMarkdown } from "../utils/html-to-md.js";
 
 const BASE_URL = "https://help.aliyun.com";
@@ -13,18 +13,6 @@ interface LlmsEntry {
 export class AliyunAdapter extends CloudDocAdapter {
   readonly provider = "aliyun";
   readonly name = "阿里云";
-
-  private async fetchText(url: string): Promise<string> {
-    const res = await fetch(url, {
-      headers: {
-        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
-      },
-    });
-    if (!res.ok) {
-      throw new Error(`Fetch failed: ${res.status} ${res.statusText}`);
-    }
-    return res.text();
-  }
 
   /**
    * 解析 llms.txt 格式的文档索引
@@ -256,7 +244,7 @@ export class AliyunAdapter extends CloudDocAdapter {
     return prices;
   }
 
-  async getProductPrice(productId?: string): Promise<PriceResult> {
+  async getProductPrice(productId?: string, _options?: PriceQueryOptions): Promise<PriceResult> {
     const prices: PriceItem[] = [];
     let source = `${BASE_URL}/price`;
     let updateDate: string | undefined;
@@ -353,7 +341,7 @@ export class AliyunAdapter extends CloudDocAdapter {
         }
       }
 
-      // 如果仍然没有价格数据，添加提示信息
+      // 如果仍然没有价格数据，添加明确的提示信息
       if (prices.length === 0) {
         prices.push({
           productName: productId,
@@ -363,7 +351,7 @@ export class AliyunAdapter extends CloudDocAdapter {
           unit: "",
           currency: "CNY",
           source: "https://www.aliyun.com/price/product",
-          note: "阿里云未在文档中公开具体价格表，请访问阿里云官网定价页查询实时价格",
+          note: "【重要】阿里云 ECS 文档中只有计费模式说明（包年包月、按量付费、预留实例券等），不包含具体实例规格价格。ECS 实例价格位于独立的定价计算器页面，请访问 https://www.aliyun.com/price/product 选择地域和实例规格后查询实时价格。",
         });
       }
     }

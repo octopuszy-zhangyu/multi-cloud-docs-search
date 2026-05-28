@@ -10,18 +10,6 @@ const LLMS_TXT_URL = `${BASE_URL}/docs/llms.txt`;
 export class KimiAdapter extends CloudDocAdapter {
     provider = "kimi";
     name = "月之暗面 Kimi";
-    async fetchText(url) {
-        const res = await fetch(url, {
-            headers: {
-                "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
-                Accept: "text/plain, text/markdown, text/html",
-            },
-        });
-        if (!res.ok) {
-            throw new Error(`Fetch failed: ${res.status} ${res.statusText} for ${url}`);
-        }
-        return res.text();
-    }
     /**
      * Kimi 只有一个产品：Kimi API 文档
      */
@@ -171,7 +159,121 @@ export class KimiAdapter extends CloudDocAdapter {
         };
     }
     /**
-     * 从 Markdown 表格中解析价格数据
+     * 从 React DocTable 组件格式中解析价格数据
+     *
+     * Kimi 定价页面使用自定义 React 组件 DocTable 渲染表格，格式为：
+     * <DocTable
+     *   columns={[{ title: "模型", width: "..." }, ...]}
+     *   rows={[
+     *     ["model-name", "1M tokens", "¥1.10", "¥6.50", "¥27.00", "262,144 tokens"],
+     *   ]}
+     * />
+     *
+     * 解析策略：提取 columns 的 title 和 rows 的单元格数据，映射为 PriceItem。
+     */
+    parseDocTable(markdown) {
+        const prices = [];
+        // 提取所有 <DocTable .../> 块
+        const docTableRegex = /<DocTable\s*[\s\S]*?\/>/g;
+        const tables = markdown.match(docTableRegex);
+        if (!tables)
+            return prices;
+        for (const table of tables) {
+            // 提取 columns 数组
+            const columnsMatch = table.match(/columns\s*=\s*\{(\[[\s\S]*?\])\}/);
+            if (!columnsMatch)
+                continue;
+            // 提取 rows 数组
+            const rowsMatch = table.match(/rows\s*=\s*\{(\[[\s\S]*?\])\}/);
+            if (!rowsMatch)
+                continue;
+            // 解析 columns 标题
+            const columnTitles = [];
+            const colRegex = /\{\s*title:\s*"([^"]*)"[^}]*\}/gs;
+            let colMatch;
+            while ((colMatch = colRegex.exec(columnsMatch[1])) !== null) {
+                columnTitles.push(colMatch[1]);
+            }
+            if (columnTitles.length < 2)
+                continue;
+            // 确定各列索引
+            const modelIdx = columnTitles.findIndex((t) => /模型/.test(t));
+            const unitIdx = columnTitles.findIndex((t) => /计费单位/.test(t));
+            // 找到价格列（排除模型名、计费单位、上下文窗口列）
+            const priceIndices = [];
+            const skipIndices = new Set([modelIdx, unitIdx]);
+            // 上下文窗口列
+            const ctxIdx = columnTitles.findIndex((t) => /上下文/.test(t));
+            if (ctxIdx >= 0)
+                skipIndices.add(ctxIdx);
+            for (let i = 0; i < columnTitles.length; i++) {
+                if (!skipIndices.has(i)) {
+                    priceIndices.push(i);
+                }
+            }
+            // 解析 rows 数据
+            // 匹配 ["value1", "value2", ...] 格式的数组（支持换行）
+            const rowArrayRegex = /\[((?:"[^"]*"\s*,\s*)*"[^"]*")\]/gs;
+            let rowMatch;
+            while ((rowMatch = rowArrayRegex.exec(rowsMatch[1])) !== null) {
+                // 解析数组中的字符串元素
+                const cellRegex = /"([^"]*)"/g;
+                const cells = [];
+                let cellMatch;
+                while ((cellMatch = cellRegex.exec(rowMatch[1])) !== null) {
+                    cells.push(cellMatch[1]);
+                }
+                if (cells.length < 2)
+                    continue;
+                const productName = modelIdx >= 0 && modelIdx < cells.length ? cells[modelIdx] : cells[0];
+                const unit = unitIdx >= 0 && unitIdx < cells.length ? cells[unitIdx] : "1M tokens";
+                // 提取所有价格
+                for (const priceIdx of priceIndices) {
+                    if (priceIdx >= cells.length)
+                        continue;
+                    const priceStr = cells[priceIdx];
+                    // 提取价格数字（去掉 ¥ 符号）
+                    const priceNum = parseFloat(priceStr.replace(/[¥￥,]/g, ""));
+                    if (isNaN(priceNum))
+                        continue;
+                    // 根据列标题确定价格类型
+                    const colTitle = columnTitles[priceIdx] || "";
+                    let specification = colTitle;
+                    let billingMode = "按量";
+                    // 判断是否为缓存命中价格
+                    if (/缓存命中/.test(colTitle)) {
+                        specification = `${colTitle}`;
+                    }
+                    else if (/缓存未命中/.test(colTitle)) {
+                        specification = `${colTitle}`;
+                    }
+                    else if (/输出/.test(colTitle)) {
+                        specification = `${colTitle}`;
+                    }
+                    else if (/输入/.test(colTitle)) {
+                        specification = `${colTitle}`;
+                    }
+                    // 统一单位
+                    let normalizedUnit = "元/百万Token";
+                    if (unit.includes("次")) {
+                        normalizedUnit = "元/次";
+                    }
+                    prices.push({
+                        productName,
+                        specification,
+                        billingMode,
+                        price: priceNum,
+                        unit: normalizedUnit,
+                        currency: "CNY",
+                        source: "文档定价页面",
+                    });
+                }
+            }
+        }
+        return prices;
+    }
+    /**
+     * 从 Markdown 表格中解析价格数据（备用方案）
      */
     parsePriceTable(markdown) {
         const prices = [];
@@ -214,15 +316,35 @@ export class KimiAdapter extends CloudDocAdapter {
         }
         return prices;
     }
-    async getProductPrice(productId) {
-        const url = `${BASE_URL}/docs/pricing.md`;
-        const markdown = await this.fetchText(url);
-        const prices = this.parsePriceTable(markdown);
+    /**
+     * Kimi 定价页面列表
+     */
+    PRICING_PAGES = [
+        { path: "/docs/pricing/chat-k26.md", name: "Kimi K2.6" },
+        { path: "/docs/pricing/chat-k25.md", name: "Kimi K2.5" },
+        { path: "/docs/pricing/chat-v1.md", name: "Moonshot V1" },
+        { path: "/docs/pricing/batch.md", name: "批量推理" },
+        { path: "/docs/pricing/tools.md", name: "联网搜索" },
+    ];
+    async getProductPrice(productId, _options) {
+        const allPrices = [];
+        for (const page of this.PRICING_PAGES) {
+            try {
+                const url = `${BASE_URL}${page.path}`;
+                const markdown = await this.fetchText(url);
+                const prices = this.parseDocTable(markdown);
+                allPrices.push(...prices);
+            }
+            catch {
+                // 单个页面失败不影响其他页面
+                continue;
+            }
+        }
         return {
             provider: this.provider,
             name: this.name,
-            prices,
-            source: url,
+            prices: allPrices,
+            source: `${BASE_URL}/docs/pricing`,
             updateDate: undefined,
         };
     }

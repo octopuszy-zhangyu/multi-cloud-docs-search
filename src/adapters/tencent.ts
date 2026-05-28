@@ -1,5 +1,5 @@
 import * as cheerio from "cheerio";
-import { CloudDocAdapter, type Product, type TocItem, type SearchResult, type PageMetadata, type PriceItem, type PriceResult, type PaginatedResult, type ListProductsOptions, type TocOptions } from "./base.js";
+import { CloudDocAdapter, type Product, type TocItem, type SearchResult, type PageMetadata, type PriceItem, type PriceResult, type PaginatedResult, type ListProductsOptions, type TocOptions, type PriceQueryOptions } from "./base.js";
 import { htmlToMarkdown } from "../utils/html-to-md.js";
 
 const BASE_URL = "https://cloud.tencent.com";
@@ -7,20 +7,6 @@ const BASE_URL = "https://cloud.tencent.com";
 export class TencentAdapter extends CloudDocAdapter {
   readonly provider = "tencent";
   readonly name = "腾讯云";
-
-  private async fetchHtml(url: string): Promise<string> {
-    const res = await fetch(url, {
-      headers: {
-        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
-        "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
-        "Accept-Language": "zh-CN,zh;q=0.9,en;q=0.8",
-      },
-    });
-    if (!res.ok) {
-      throw new Error(`Fetch failed: ${res.status} ${res.statusText}`);
-    }
-    return res.text();
-  }
 
   async listProducts(options?: ListProductsOptions): Promise<PaginatedResult<Product>> {
     const url = `${BASE_URL}/document/product`;
@@ -306,7 +292,7 @@ export class TencentAdapter extends CloudDocAdapter {
    * 调用 workbench API 获取 CVM 实例价格
    */
   private async callWorkbenchApi(action: string, region: string, data: any): Promise<any> {
-    const res = await fetch(
+    const res = await this.fetchWithRetry(
       `https://workbench.cloud.tencent.com/cgi/api?i=${action}&uin=&region=${region}`,
       {
         method: "POST",

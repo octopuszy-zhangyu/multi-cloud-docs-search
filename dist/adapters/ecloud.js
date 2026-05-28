@@ -10,22 +10,9 @@ const ARTICLE_CONTENT_API = `${HELP_CENTER_URL}/request-api/service-api/article/
 export class EcloudAdapter extends CloudDocAdapter {
     provider = "ecloud";
     name = "移动云";
-    async fetchHtml(url) {
-        const res = await fetch(url, {
-            headers: {
-                "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
-                "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
-                "Accept-Language": "zh-CN,zh;q=0.9,en;q=0.8",
-            },
-        });
-        if (!res.ok) {
-            throw new Error(`Fetch failed: ${res.status} ${res.statusText}`);
-        }
-        return res.text();
-    }
-    async fetchJson(url) {
+    async fetchApi(url) {
         try {
-            const res = await fetch(url, {
+            const res = await this.fetchWithRetry(url, {
                 headers: {
                     "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
                     "Accept": "application/json, text/plain, */*",
@@ -50,7 +37,7 @@ export class EcloudAdapter extends CloudDocAdapter {
     }
     async listProducts(options) {
         // 优先使用API获取产品列表
-        const data = await this.fetchJson(CATEGORY_TREE_API);
+        const data = await this.fetchApi(CATEGORY_TREE_API);
         if (data?.data?.children) {
             const products = [];
             const seen = new Set();
@@ -95,7 +82,7 @@ export class EcloudAdapter extends CloudDocAdapter {
         return this.paginate(filtered, options?.page, options?.pageSize);
     }
     async getOutlineId(productId) {
-        const data = await this.fetchJson(CATEGORY_TREE_API);
+        const data = await this.fetchApi(CATEGORY_TREE_API);
         if (!data?.data?.children)
             return null;
         let outlineId = null;
@@ -141,7 +128,7 @@ export class EcloudAdapter extends CloudDocAdapter {
             return this.paginate(filtered, options?.page, options?.pageSize, 200);
         }
         const url = `${OUTLINE_TREE_API}?outlineId=${outlineId}`;
-        const data = await this.fetchJson(url);
+        const data = await this.fetchApi(url);
         const items = [];
         const seen = new Set();
         if (!data?.data?.children)
@@ -207,7 +194,7 @@ export class EcloudAdapter extends CloudDocAdapter {
     }
     async getPageMetadata(pageId) {
         // 使用API获取文章信息
-        const data = await this.fetchJson(`${ARTICLE_INFO_API}/${pageId}`);
+        const data = await this.fetchApi(`${ARTICLE_INFO_API}/${pageId}`);
         if (data?.code === 200 && data.data) {
             const article = data.data;
             const updateDate = new Date(article.gmtModify).toISOString().split('T')[0].replace(/-/g, '/');
@@ -238,7 +225,7 @@ export class EcloudAdapter extends CloudDocAdapter {
                 return htmlToMarkdown(await this.fetchHtml(contentPath));
             }
             const articleId = match[1];
-            const infoData = await this.fetchJson(`${ARTICLE_INFO_API}/${articleId}`);
+            const infoData = await this.fetchApi(`${ARTICLE_INFO_API}/${articleId}`);
             if (infoData?.code === 200 && infoData.data?.content) {
                 contentPath = infoData.data.content;
             }
@@ -353,7 +340,7 @@ export class EcloudAdapter extends CloudDocAdapter {
         }
         return prices;
     }
-    async getProductPrice(productId) {
+    async getProductPrice(productId, options) {
         const result = {
             provider: this.provider,
             name: this.name,
@@ -394,6 +381,27 @@ export class EcloudAdapter extends CloudDocAdapter {
             if (result.prices.length > 0) {
                 result.source = `${HELP_CENTER_URL}/doc/category/${productId}`;
             }
+            // 关键词过滤
+            let filteredPrices = result.prices;
+            if (options?.keyword) {
+                const keywords = options.keyword.trim().split(/\s+/).filter(Boolean);
+                if (keywords.length > 0) {
+                    filteredPrices = result.prices.filter(item => {
+                        const text = (item.productName + " " + item.specification + " " + item.billingMode).toLowerCase();
+                        return keywords.every(kw => text.includes(kw.toLowerCase()));
+                    });
+                }
+            }
+            // 分页
+            const page = options?.page || 1;
+            const pageSize = options?.pageSize || 100;
+            const start = (page - 1) * pageSize;
+            const paged = filteredPrices.slice(start, start + pageSize);
+            result.prices = paged;
+            result.total = filteredPrices.length;
+            result.page = page;
+            result.pageSize = pageSize;
+            result.hasMore = start + pageSize < filteredPrices.length;
         }
         catch {
             // Return empty prices if unable to fetch

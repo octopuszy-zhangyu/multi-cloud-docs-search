@@ -5,17 +5,6 @@ const BASE_URL = "https://help.aliyun.com";
 export class BailianAdapter extends CloudDocAdapter {
     provider = "bailian";
     name = "阿里云百炼";
-    async fetchHtml(url) {
-        const res = await fetch(url, {
-            headers: {
-                "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
-            },
-        });
-        if (!res.ok) {
-            throw new Error(`Fetch failed: ${res.status} ${res.statusText}`);
-        }
-        return res.text();
-    }
     async listProducts() {
         // 百炼产品在阿里云帮助中心的 alias 为 /model-studio
         return [
@@ -186,7 +175,7 @@ export class BailianAdapter extends CloudDocAdapter {
         }
         return prices;
     }
-    async getProductPrice(productId) {
+    async getProductPrice(productId, _options) {
         const url = `${BASE_URL}/zh/model-studio/billing`;
         const html = await this.fetchHtml(url);
         const markdown = htmlToMarkdown(html);

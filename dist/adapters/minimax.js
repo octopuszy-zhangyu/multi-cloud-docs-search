@@ -5,18 +5,6 @@ const LLMS_URL = `${BASE_URL}/docs/llms.txt`;
 export class MinimaxAdapter extends CloudDocAdapter {
     provider = "minimax";
     name = "MiniMax";
-    async fetchText(url) {
-        const res = await fetch(url, {
-            headers: {
-                "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
-                "Accept": "text/plain,text/markdown,*/*",
-            },
-        });
-        if (!res.ok) {
-            throw new Error(`Fetch failed: ${res.status} ${res.statusText}`);
-        }
-        return res.text();
-    }
     filterByKeywords(items, keyword) {
         if (!keyword)
             return items;
@@ -220,7 +208,7 @@ export class MinimaxAdapter extends CloudDocAdapter {
         }
         return prices;
     }
-    async getProductPrice(productId) {
+    async getProductPrice(productId, _options) {
         const url = `${BASE_URL}/docs/guides/pricing-paygo.md`;
         const markdown = await this.fetchText(url);
         const prices = this.parsePriceTable(markdown);
