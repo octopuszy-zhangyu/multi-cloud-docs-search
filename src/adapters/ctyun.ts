@@ -328,8 +328,10 @@ export class CtyunAdapter extends CloudDocAdapter {
         result.dataStatus = "complete";
       } else if (result.prices.length > 0 && result.prices[0].price === 0) {
         result.dataStatus = "no_price";
+        result.note = "天翼云部分定价页面为 JavaScript 动态渲染，文档中可能无法获取完整价格数据。如需实时价格，请访问天翼云官网价格计算器。";
       } else {
         result.dataStatus = "no_data";
+        result.note = "天翼云定价页面为 JavaScript 动态渲染，文档中无法获取完整价格数据。如需实时价格，请访问天翼云官网价格计算器：https://www.ctyun.cn/price";
       }
     } catch {
       // 如果搜索失败，返回空结果

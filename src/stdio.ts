@@ -130,12 +130,13 @@ const server = new McpServer(
 **禁止行为**：
 - **严禁先遍历 list_products** — 价格查询不需要获取完整产品列表
 - **严禁先遍历 get_document_toc** — 直接使用 get_product_price_quick 即可
-- **严禁使用具体规格搜索** — 不要用"4C8G""4C 8G"等具体规格作为搜索词
 
 **不需要先 list_products 获取所有产品**：搜索价格时不需要遍历目录树，直接使用 get_product_price_quick 或 search_documents 搜索定价关键词即可。
 
 **价格数据注意事项**：
 - **dataStatus 字段说明**：get_product_price 返回结果中的 dataStatus 字段标记数据完整性：complete=有完整价格数据, partial=部分数据, no_price=文档无价格（需访问外部定价页）, no_data=无数据。子Agent 应根据 dataStatus 决定下一步操作，dataStatus 为 no_price 或 no_data 时立即停止搜索并返回结果。
+- **关键词自动扩展**：get_product_price 和 search_documents 均支持关键词自动扩展。如 "4C8G" 会自动匹配各厂商的规格命名（如腾讯云 S6.LARGE8、火山引擎 g3al.2xlarge、华为云 m9.2xlarge.8 等）。无需手动尝试不同关键词。
+- **分页参数**：get_product_price 支持 page/pageSize 和 offset/limit 两种分页方式。当返回数据量过大时，可使用 offset/limit 精确控制返回条数。
 - 阿里云、腾讯云、华为云的文档中通常只有折扣框架，不含精确基准价格（价格在独立价格计算器页面）。**遇到此类提示时，应直接调用 get_product_price 或 get_product_price_quick 获取价格数据，而非继续搜索文档**。
 - 天翼云、火山引擎的文档中包含价格表，可直接通过 search_documents + get_page_content 获取
 - AI 厂商（DeepSeek、MiniMax、Kimi、百炼）定价可通过 get_product_price 获取
@@ -144,6 +145,7 @@ const server = new McpServer(
 - **火山引擎 ECS 价格**：文档明确说明"价格信息需要通过价格计算器查看"，文档中不直接显示价格，无需遍历目录寻找价格表，直接调用 get_product_price 获取
 - **百度云 BCC 价格**：文档引用外部定价页面（cloud.baidu.com/publicity/bccplus.html），文档内无具体价格数字，直接调用 get_product_price_quick 获取 URL
 - **联通云 ECS 价格**：文档只有按日单价（vCPU ¥55.89/核/日, 内存 ¥11.50/GB/日），没有包月/包年价格，直接调用 get_product_price 获取
+- **天翼云价格页面**：部分定价页面为 JavaScript 动态渲染，get_page_content 可能无法获取完整价格数据。建议使用 get_product_price 获取结构化价格数据，或访问天翼云官网价格计算器。
 
 **已知数据缺失的厂商（无需遍历目录，直接返回提示）**：
 - **华为云 ECS**：定价数据位于外部页面 huaweicloud.com/pricing，文档系统中无具体价格。调用 get_product_price_quick 获取价格计算器 URL 后即可返回，无需遍历目录或搜索文档。如果 get_product_price 返回空，直接告知用户使用官网价格计算器。**遇到"请使用价格计算器"提示时，应调用 get_product_price 获取价格数据**。
@@ -442,7 +444,7 @@ server.registerTool(
 server.registerTool(
   "search_documents",
   {
-    description: "在指定云厂商的产品文档中按关键词搜索，返回匹配的页面列表。关键词支持多个空格分隔（AND 逻辑），建议使用精简关键词。当搜索结果为空时，系统会自动尝试去掉具体规格词（如 4C8G、5M）后重新搜索",
+    description: "在指定云厂商的产品文档中按关键词搜索，返回匹配的页面列表。关键词支持多个空格分隔（AND 逻辑），建议使用精简关键词。当搜索结果为空时，系统会自动尝试去掉具体规格词（如 4C8G、5M）后重新搜索，并支持规格变体扩展（如 4C8G → 4核/8gb/xlarge/s6 等）",
     inputSchema: z.object({
       provider: z.string().describe("云厂商标识"),
       productId: z.string().describe("产品文档 ID"),
@@ -491,11 +493,12 @@ server.registerTool(
           expansionAttempts.push(coreKeywords[0]);
         }
 
-        // 第三级：实例规格变体扩展（4C8G → xlarge/large/c7等）
+        // 第三级：实例规格变体扩展（4C8G → 4核/8gb/xlarge/s6等）
         const specVariants: Record<string, string[]> = {
-          "4c8g": ["xlarge", "large", "c7", "规格", "实例类型", "配置"],
-          "2c4g": ["medium", "small", "规格", "实例类型", "配置"],
-          "8c16g": ["2xlarge", "xlarge", "规格", "实例类型", "配置"],
+          "4c8g": ["4核", "8gb", "4核 8gb", "4c", "8g", "large8", "xlarge", "2xlarge", "s6", "g3", "m9", "s5", "ecs.g7", "c7", "规格", "实例类型", "配置"],
+          "2c4g": ["2核", "4gb", "2核 4gb", "2c", "4g", "medium", "small", "s6.small", "c7", "规格", "实例类型", "配置"],
+          "8c16g": ["8核", "16gb", "8核 16gb", "8c", "16g", "2xlarge", "4xlarge", "c7", "m9", "规格", "实例类型", "配置"],
+          "16c32g": ["16核", "32gb", "16核 32gb", "16c", "32g", "4xlarge", "8xlarge", "规格", "实例类型", "配置"],
         };
         for (const [spec, variants] of Object.entries(specVariants)) {
           if (searchKeyword.toLowerCase().includes(spec)) {
@@ -503,6 +506,16 @@ server.registerTool(
               expansionAttempts.push(variant);
             }
           }
+        }
+
+        // 第三级扩展：尝试提取数字核数和内存大小（如 "4C8G" → "4核 8GB"）
+        const coreMemMatch = searchKeyword.toLowerCase().match(/(\d+)\s*[cC核]\s*(\d+)\s*[gG]/);
+        if (coreMemMatch) {
+          const cores = coreMemMatch[1];
+          const mem = coreMemMatch[2];
+          expansionAttempts.push(`${cores}核`);
+          expansionAttempts.push(`${mem}gb`);
+          expansionAttempts.push(`${cores}核 ${mem}gb`);
         }
 
         // 第四级：尝试常用宽泛词
@@ -631,16 +644,18 @@ server.registerTool(
 server.registerTool(
   "get_product_price",
   {
-    description: "获取指定云厂商的产品价格信息。不传 productId 则返回所有产品价格概览。支持精确价格的厂商：腾讯云 CVM（productId 传 \"cvm\" 或 \"213\"）、天翼云云电脑（productId 传 \"10027004\"）、AI 厂商（DeepSeek、MiniMax、Kimi、百炼）。阿里云、华为云文档不含精确价格，需使用官网价格计算器。如需快速获取定价页面 URL，请使用 get_product_price_quick 工具。支持分页（page/pageSize）和关键词过滤（keyword）",
+    description: "获取指定云厂商的产品价格信息。不传 productId 则返回所有产品价格概览。支持精确价格的厂商：腾讯云 CVM（productId 传 \"cvm\" 或 \"213\"）、天翼云云电脑（productId 传 \"10027004\"）、AI 厂商（DeepSeek、MiniMax、Kimi、百炼）。阿里云、华为云文档不含精确价格，需使用官网价格计算器。如需快速获取定价页面 URL，请使用 get_product_price_quick 工具。支持分页（page/pageSize 或 offset/limit）和关键词过滤（keyword）。关键词支持自动扩展：如 \"4C8G\" 会自动匹配各厂商的规格命名",
     inputSchema: z.object({
       provider: z.string().describe("云厂商标识"),
       productId: z.string().optional().describe("产品 ID（可选，不传则返回所有产品价格概览）。腾讯云传 \"cvm\" 或 \"213\"，天翼云传 \"10027004\"（云电脑）或 \"11061839\"（Token 服务）"),
-      page: z.number().optional().describe("页码，默认 1"),
-      pageSize: z.number().optional().describe("每页条数，默认 100，最大 500"),
-      keyword: z.string().optional().describe("关键词过滤（如规格型号 's6.large'、计费模式 '按量'、地域 '华北' 等），支持模糊匹配"),
+      page: z.number().optional().describe("页码，默认 1。与 offset/limit 二选一"),
+      pageSize: z.number().optional().describe("每页条数，默认 100，最大 500。与 offset/limit 二选一"),
+      keyword: z.string().optional().describe("关键词过滤（如规格型号 's6.large'、计费模式 '按量'、地域 '华北' 等），支持模糊匹配和自动扩展（如 '4C8G' 自动匹配各厂商规格）"),
+      offset: z.number().optional().describe("偏移量，从第几条开始返回。与 page/pageSize 二选一"),
+      limit: z.number().optional().describe("返回条数上限，最大 500。与 page/pageSize 二选一"),
     }).strict(),
   },
-  async ({ provider, productId, page, pageSize, keyword }: { provider: string; productId?: string; page?: number; pageSize?: number; keyword?: string }) => {
+  async ({ provider, productId, page, pageSize, keyword, offset, limit }: { provider: string; productId?: string; page?: number; pageSize?: number; keyword?: string; offset?: number; limit?: number }) => {
     try {
       const adapter = getAdapter(provider);
       const result = await adapter.getProductPrice(productId, { page, pageSize, keyword });
@@ -648,26 +663,157 @@ server.registerTool(
       // 应用分页和过滤（如果适配器未处理）
       let prices = result.prices || [];
       const total = result.total || prices.length;
-      const currentPage = result.page || page || 1;
-      const currentPageSize = result.pageSize || pageSize || 100;
+      let currentPage = result.page || page || 1;
+      let currentPageSize = result.pageSize || pageSize || 100;
+      let currentOffset = offset || 0;
+      let currentLimit = limit || 0;
 
       // 如果适配器返回了完整数据但没有分页，在此处处理
       if (!result.hasMore && prices.length > 0 && (page || pageSize || keyword)) {
-        // 关键词过滤
+        // 关键词过滤（支持自动扩展）
         if (keyword) {
-          const lowerKeyword = keyword.toLowerCase();
-          prices = prices.filter(p =>
+          const lowerKeyword = keyword.toLowerCase().trim();
+
+          // 精确匹配过滤
+          let filtered = prices.filter(p =>
             p.specification?.toLowerCase().includes(lowerKeyword) ||
             p.productName?.toLowerCase().includes(lowerKeyword) ||
             p.region?.toLowerCase().includes(lowerKeyword) ||
             p.billingMode?.toLowerCase().includes(lowerKeyword)
           );
+
+          // 自动扩展：精确匹配为空时，尝试规格变体匹配
+          if (filtered.length === 0) {
+            // 规格变体映射表：通用规格名 → 各厂商可能的规格表示
+            const specVariants: Record<string, string[]> = {
+              "4c8g": ["4核", "8gb", "4核 8gb", "4c", "8g", "large8", "xlarge", "2xlarge", "s6", "g3", "m9", "s5", "ecs.g7", "c7"],
+              "2c4g": ["2核", "4gb", "2核 4gb", "2c", "4g", "medium", "small", "s6.small", "c7"],
+              "8c16g": ["8核", "16gb", "8核 16gb", "8c", "16g", "2xlarge", "4xlarge", "c7", "m9"],
+              "16c32g": ["16核", "32gb", "16核 32gb", "16c", "32g", "4xlarge", "8xlarge"],
+            };
+
+            // 检查 keyword 是否匹配某个通用规格
+            const matchedSpec = Object.entries(specVariants).find(([spec]) =>
+              lowerKeyword.includes(spec) || spec.includes(lowerKeyword.replace(/[^a-z0-9]/g, ""))
+            );
+
+            if (matchedSpec) {
+              const variants = matchedSpec[1];
+              filtered = prices.filter(p => {
+                const specText = (p.specification + " " + (p.productName || "")).toLowerCase();
+                return variants.some(v => specText.includes(v));
+              });
+
+              if (filtered.length > 0) {
+                // 标记为自动扩展结果
+                return {
+                  content: [{
+                    type: "text",
+                    text: JSON.stringify({
+                      ...result,
+                      prices: filtered,
+                      total: filtered.length,
+                      page: 1,
+                      pageSize: filtered.length,
+                      hasMore: false,
+                      autoExpanded: true,
+                      originalKeyword: keyword,
+                      expandedMessage: `关键词 "${keyword}" 已自动扩展为匹配规格变体，找到 ${filtered.length} 条价格记录`,
+                    }, null, 2),
+                  }],
+                };
+              }
+            }
+
+            // 第二级扩展：尝试提取数字核数和内存大小
+            const coreMemMatch = lowerKeyword.match(/(\d+)\s*[cC核]\s*(\d+)\s*[gG]/);
+            if (coreMemMatch) {
+              const cores = coreMemMatch[1];
+              const mem = coreMemMatch[2];
+              filtered = prices.filter(p => {
+                const specText = (p.specification + " " + (p.productName || "")).toLowerCase();
+                return specText.includes(`${cores}核`) && specText.includes(`${mem}gb`);
+              });
+
+              if (filtered.length > 0) {
+                return {
+                  content: [{
+                    type: "text",
+                    text: JSON.stringify({
+                      ...result,
+                      prices: filtered,
+                      total: filtered.length,
+                      page: 1,
+                      pageSize: filtered.length,
+                      hasMore: false,
+                      autoExpanded: true,
+                      originalKeyword: keyword,
+                      expandedMessage: `关键词 "${keyword}" 已自动扩展为匹配 "${cores}核 ${mem}GB" 规格，找到 ${filtered.length} 条价格记录`,
+                    }, null, 2),
+                  }],
+                };
+              }
+            }
+
+            // 第三级扩展：尝试只匹配核数
+            const coreOnlyMatch = lowerKeyword.match(/(\d+)\s*[cC核]/);
+            if (coreOnlyMatch) {
+              const cores = coreOnlyMatch[1];
+              filtered = prices.filter(p => {
+                const specText = (p.specification + " " + (p.productName || "")).toLowerCase();
+                return specText.includes(`${cores}核`);
+              });
+
+              if (filtered.length > 0) {
+                return {
+                  content: [{
+                    type: "text",
+                    text: JSON.stringify({
+                      ...result,
+                      prices: filtered,
+                      total: filtered.length,
+                      page: 1,
+                      pageSize: filtered.length,
+                      hasMore: false,
+                      autoExpanded: true,
+                      originalKeyword: keyword,
+                      expandedMessage: `关键词 "${keyword}" 已自动扩展为匹配 "${cores}核" 规格，找到 ${filtered.length} 条价格记录`,
+                    }, null, 2),
+                  }],
+                };
+              }
+            }
+
+            // 所有扩展都失败，返回空结果
+            prices = filtered;
+          } else {
+            prices = filtered;
+          }
         }
 
-        // 分页
-        const start = ((page || 1) - 1) * (pageSize || 100);
-        const end = start + (pageSize || 100);
-        prices = prices.slice(start, end);
+        // 分页（支持 page/pageSize 或 offset/limit）
+        if (offset !== undefined && limit !== undefined) {
+          // 使用 offset/limit 模式
+          prices = prices.slice(offset, offset + limit);
+          currentOffset = offset;
+          currentLimit = limit;
+        } else if (page !== undefined && pageSize !== undefined) {
+          // 使用 page/pageSize 模式
+          const start = (page - 1) * pageSize;
+          const end = start + pageSize;
+          prices = prices.slice(start, end);
+          currentPage = page;
+          currentPageSize = pageSize;
+        } else if (page !== undefined || pageSize !== undefined) {
+          // 混合模式：只有 page 或只有 pageSize
+          const p = page || 1;
+          const ps = pageSize || 100;
+          const start = (p - 1) * ps;
+          const end = start + ps;
+          prices = prices.slice(start, end);
+          currentPage = p;
+          currentPageSize = ps;
+        }
       }
 
       return {
@@ -679,7 +825,9 @@ server.registerTool(
             total,
             page: currentPage,
             pageSize: currentPageSize,
-            hasMore: (page || 1) * (pageSize || 100) < total,
+            offset: currentOffset,
+            limit: currentLimit,
+            hasMore: currentPageSize > 0 ? currentPage * currentPageSize < total : currentOffset + currentLimit < total,
           }, null, 2),
         }],
       };
@@ -714,8 +862,14 @@ server.registerTool(
       // 已知的定价页面速查表
       const priceQuickMap: Record<string, Record<string, { url: string; description: string }[]>> = {
         "ctyun": {
-          "10027004": [{ url: "https://www.ctyun.cn/document/10027004", description: "天翼云电脑（政企版）价格" }],
-          "10026730": [{ url: "https://www.ctyun.cn/document/10026730", description: "弹性云主机 ECS 价格" }],
+          "10027004": [
+            { url: "https://www.ctyun.cn/document/10027004", description: "天翼云电脑（政企版）价格（注意：定价页面为 JavaScript 动态渲染，文档中可能无法获取完整价格数据）" },
+            { url: "https://www.ctyun.cn/price", description: "天翼云官网价格计算器（推荐：获取实时价格）" },
+          ],
+          "10026730": [
+            { url: "https://www.ctyun.cn/document/10026730", description: "弹性云主机 ECS 价格（注意：定价页面为 JavaScript 动态渲染，文档中可能无法获取完整价格数据）" },
+            { url: "https://www.ctyun.cn/price", description: "天翼云官网价格计算器（推荐：获取实时价格）" },
+          ],
           "11061839": [{ url: "https://www.ctyun.cn/document/11061839", description: "Token 服务价格" }],
         },
         "aliyun": {

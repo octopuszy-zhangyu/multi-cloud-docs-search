@@ -267,7 +267,13 @@ export class HuaweiAdapter extends CloudDocAdapter {
             prices.push(...productPrices);
           }
 
-          // 3. 对 Token 类产品，补充 productInfo 详细价格
+          // 3. 如果 export/productlist 没数据，尝试 productInfo API
+          if (!exportData || Object.values(exportData).every(arr => !Array.isArray(arr) || arr.length === 0)) {
+            const infoPrices = await this.fetchProductInfoPrices(product.urlPath, product.name);
+            prices.push(...infoPrices);
+          }
+
+          // 4. 对 Token 类产品，补充 productInfo 详细价格
           if (product.urlPath === "maas") {
             const tokenPrices = await this.fetchMaasTokenPrices();
             prices.push(...tokenPrices);
@@ -360,27 +366,73 @@ export class HuaweiAdapter extends CloudDocAdapter {
   }
 
   /**
+   * 产品 urlPath 到 source 参数的映射表
+   * 不同产品需要不同的 resource type 参数
+   * 部分产品可能需要尝试多个 source 参数
+   */
+  private readonly PRODUCT_SOURCE_MAP: Record<string, { param: string }[]> = {
+    "ecs": [{ param: "hws.resource.type.vm" }, { param: "hws.resource.type.ecs" }],
+    "ecs-dedicated": [{ param: "hws.resource.type.vm" }],
+    "evs": [{ param: "hws.resource.type.volume" }],
+    "sfs": [{ param: "hws.resource.type.sfs" }],
+    "rds": [{ param: "hws.resource.type.rds" }],
+    "dds": [{ param: "hws.resource.type.dds" }],
+    "gaussdb": [{ param: "hws.resource.type.gaussdb" }],
+    "redis": [{ param: "hws.resource.type.redis" }],
+    "elb": [{ param: "hws.resource.type.elb" }],
+    "vpc": [{ param: "hws.resource.type.vpc" }],
+    "dns": [{ param: "hws.resource.type.dns" }],
+    "cdn": [{ param: "hws.resource.type.cdn" }],
+    "waf": [{ param: "hws.resource.type.waf" }],
+    "dws": [{ param: "hws.resource.type.dws" }],
+    "mrs": [{ param: "hws.resource.type.mrs" }],
+    "css": [{ param: "hws.resource.type.css" }],
+    "dcs": [{ param: "hws.resource.type.dcs" }],
+    "cce": [{ param: "hws.resource.type.cce" }],
+    "cbr": [{ param: "hws.resource.type.cbr" }],
+    "nat": [{ param: "hws.resource.type.nat" }],
+    "maas": [{ param: "hws.resource.type.maas" }],
+    "modelarts": [{ param: "hws.resource.type.modelarts" }],
+  };
+
+  /**
    * 调用 export/productlist API 获取全量价格
+   * 会尝试所有可用的 source 参数，直到获取到数据
    */
   private async exportProductList(urlPath: string): Promise<Record<string, any[]> | null> {
-    const res = await this.fetchWithRetry(`${CALCULATOR_API}/export/productlist`, {
-      method: "POST",
-      headers: {
-        "accept": "application/json, text/plain, */*",
-        "content-type": "application/json",
-        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36",
-        "Referer": "https://www.huaweicloud.com/pricing/calculator.html",
-      },
-      body: JSON.stringify({
-        urlPath,
-        sources: [{ param: "hws.resource.type.vm" }],
-        type: "JSON",
-        language: "zh-cn",
-      }),
-    });
+    const sourcesList = this.PRODUCT_SOURCE_MAP[urlPath] || [{ param: "hws.resource.type.vm" }];
 
-    if (!res.ok) return null;
-    return res.json() as Promise<Record<string, any[]>>;
+    // 尝试每个 source 参数，直到获取到数据
+    for (const sources of sourcesList.map(s => [s])) {
+      try {
+        const res = await this.fetchWithRetry(`${CALCULATOR_API}/export/productlist`, {
+          method: "POST",
+          headers: {
+            "accept": "application/json, text/plain, */*",
+            "content-type": "application/json",
+            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36",
+            "Referer": "https://www.huaweicloud.com/pricing/calculator.html",
+          },
+          body: JSON.stringify({
+            urlPath,
+            sources,
+            type: "JSON",
+            language: "zh-cn",
+          }),
+        });
+
+        if (!res.ok) continue;
+        const data = await res.json() as Record<string, any[]>;
+
+        // 检查是否有实际数据
+        const hasData = Object.values(data).some(arr => Array.isArray(arr) && arr.length > 0);
+        if (hasData) return data;
+      } catch {
+        continue;
+      }
+    }
+
+    return null;
   }
 
   /**
@@ -458,6 +510,61 @@ export class HuaweiAdapter extends CloudDocAdapter {
       }
     }
 
+    return prices;
+  }
+
+  /**
+   * 通过 productInfo API 获取产品价格（export/productlist 的备选方案）
+   */
+  private async fetchProductInfoPrices(urlPath: string, productName: string): Promise<PriceItem[]> {
+    const prices: PriceItem[] = [];
+    try {
+      const data = await this.fetchCalculatorApi<{ product: Record<string, any[]> }>(
+        "productInfo",
+        {
+          urlPath,
+          tag: "general.online.portal",
+          region: "cn-north-4",
+          tab: "calc",
+          sign: "common",
+        }
+      );
+
+      if (!data?.product) return prices;
+
+      for (const [, items] of Object.entries(data.product)) {
+        for (const item of items) {
+          const spec = item.resourceSpecCode || item.specCode || "";
+          if (!spec) continue;
+
+          const planList = item.planList || [];
+          for (const plan of planList) {
+            const billingMode = plan.billingMode === "ONDEMAND" ? "按量" : "包年包月";
+            if (plan.amount == null || plan.amount <= 0) continue;
+
+            const period = plan.period || "";
+            const unit = period === "hourly" ? "元/小时"
+              : period === "monthly" ? "元/月"
+              : period === "yearly" ? "元/年"
+              : "元";
+
+            prices.push({
+              productName,
+              specification: spec,
+              region: plan.region || "cn-north-4",
+              billingMode,
+              price: plan.amount,
+              unit,
+              currency: "CNY",
+              source: `https://www.huaweicloud.com/pricing/calculator.html#/${urlPath}`,
+              note: "价格数据来源：华为云官网价格计算器（标准定价，不含促销活动）",
+            });
+          }
+        }
+      }
+    } catch {
+      // productInfo 获取失败不影响其他产品
+    }
     return prices;
   }
 
