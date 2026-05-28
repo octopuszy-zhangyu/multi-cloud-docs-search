@@ -239,6 +239,7 @@ export class CtyunAdapter extends CloudDocAdapter {
    *
    * 通过搜索产品文档中的"价格"、"计费"相关页面，
    * 获取页面内容并解析价格表格。
+   * 当文档中只有组件单价（CPU、内存单价）时，自动计算常见规格的总价。
    */
   async getProductPrice(productId?: string, _options?: PriceQueryOptions): Promise<PriceResult> {
     const result: PriceResult = {
@@ -318,10 +319,102 @@ export class CtyunAdapter extends CloudDocAdapter {
           continue;
         }
       }
+
+      // 自动计算常见规格总价（当文档只有组件单价时）
+      result.prices.push(...this.calculateCommonSpecs(result.prices, result.source));
     } catch {
       // 如果搜索失败，返回空结果
     }
 
     return result;
+  }
+
+  /**
+   * 从组件单价自动计算常见规格的总价
+   *
+   * 天翼云文档通常以组件单价形式展示（CPU 单价、内存单价），
+   * 此方法自动计算常见规格（2C4G、4C8G、8C16G 等）的总价。
+   */
+  private calculateCommonSpecs(prices: PriceItem[], source: string): PriceItem[] {
+    const calculatedPrices: PriceItem[] = [];
+
+    // 查找 CPU 单价和内存单价
+    let cpuPrice = 0;
+    let memPrice = 0;
+    let cpuUnit = "";
+    let memUnit = "";
+    let billingMode = "包年包月";
+
+    for (const p of prices) {
+      const spec = (p.specification || "").toLowerCase();
+      const unit = p.unit || "";
+
+      // 匹配 CPU 单价（包含 "cpu" 或 "核"）
+      if (spec.includes("cpu") || spec.includes("核")) {
+        cpuPrice = p.price;
+        cpuUnit = unit;
+        billingMode = p.billingMode;
+      }
+
+      // 匹配内存单价（包含 "内存" 或 "mem" 或 "gb"）
+      if (spec.includes("内存") || spec.includes("mem") || spec.includes("gb")) {
+        memPrice = p.price;
+        memUnit = unit;
+      }
+    }
+
+    // 如果找到了 CPU 和内存单价，计算常见规格
+    if (cpuPrice > 0 && memPrice > 0) {
+      // 常见规格配置
+      const commonSpecs = [
+        { cpu: 1, mem: 1, name: "1C1G" },
+        { cpu: 1, mem: 2, name: "1C2G" },
+        { cpu: 2, mem: 2, name: "2C2G" },
+        { cpu: 2, mem: 4, name: "2C4G" },
+        { cpu: 2, mem: 8, name: "2C8G" },
+        { cpu: 4, mem: 4, name: "4C4G" },
+        { cpu: 4, mem: 8, name: "4C8G" },
+        { cpu: 4, mem: 16, name: "4C16G" },
+        { cpu: 8, mem: 8, name: "8C8G" },
+        { cpu: 8, mem: 16, name: "8C16G" },
+        { cpu: 8, mem: 32, name: "8C32G" },
+        { cpu: 16, mem: 16, name: "16C16G" },
+        { cpu: 16, mem: 32, name: "16C32G" },
+        { cpu: 16, mem: 64, name: "16C64G" },
+      ];
+
+      // 统一单位为 "元/月"
+      let cpuMonthlyPrice = cpuPrice;
+      let memMonthlyPrice = memPrice;
+
+      // 如果是按小时价格，转换为按月价格（假设 30 天 * 24 小时 = 720 小时）
+      if (cpuUnit.includes("小时")) {
+        cpuMonthlyPrice = cpuPrice * 720;
+      } else if (cpuUnit.includes("年")) {
+        cpuMonthlyPrice = cpuPrice / 12;
+      }
+
+      if (memUnit.includes("小时")) {
+        memMonthlyPrice = memPrice * 720;
+      } else if (memUnit.includes("年")) {
+        memMonthlyPrice = memPrice / 12;
+      }
+
+      for (const spec of commonSpecs) {
+        const totalPrice = cpuMonthlyPrice * spec.cpu + memMonthlyPrice * spec.mem;
+        calculatedPrices.push({
+          productName: `云主机 ${spec.name}`,
+          specification: spec.name,
+          billingMode,
+          price: Math.round(totalPrice * 100) / 100,
+          unit: "元/月",
+          currency: "CNY",
+          source,
+          note: `由组件单价计算得出（CPU ${cpuPrice}${cpuUnit} × ${spec.cpu}核 + 内存 ${memPrice}${memUnit} × ${spec.mem}GB）`,
+        });
+      }
+    }
+
+    return calculatedPrices;
   }
 }

@@ -259,7 +259,7 @@ export class BaiduAdapter extends CloudDocAdapter {
         prices: [],
         source: `${BASE_URL}/publicity/bccplus.html`,
         updateDate: undefined,
-        note: "百度云 BCC 文档中无具体实例价格。预付费定价和后付费定价页面均指向外部「BCC价格详情」页面（cloud.baidu.com/publicity/bccplus.html），该页面包含完整的实例规格定价（含裸实例价格）。请访问该外部页面获取具体价格，或使用 get_product_price_quick({ provider: \"baidu\", productId: \"BCC\" }) 获取定价页面 URL。",
+        note: "百度云 BCC 文档中无具体实例价格，定价页面在外部（cloud.baidu.com/publicity/bccplus.html）。请访问该页面获取具体价格，或使用 get_product_price_quick 获取定价页面 URL。",
       };
     }
 

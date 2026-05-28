@@ -312,13 +312,18 @@ export class HuaweiAdapter extends CloudDocAdapter {
       );
     }
 
-    // 应用分页
+    // 分页（仅在明确指定 page/pageSize 时截断，否则返回全部数据）
     const total = prices.length;
-    const page = options?.page || 1;
-    const pageSize = options?.pageSize || 100;
-    const start = (page - 1) * pageSize;
-    const end = start + pageSize;
-    const pagedPrices = prices.slice(start, end);
+    const page = options?.page;
+    const pageSize = options?.pageSize;
+    let pagedPrices = prices;
+    let hasMore = false;
+    if (page && pageSize) {
+      const start = (page - 1) * pageSize;
+      const end = start + pageSize;
+      pagedPrices = prices.slice(start, end);
+      hasMore = end < total;
+    }
 
     return {
       provider: this.provider,
@@ -327,9 +332,9 @@ export class HuaweiAdapter extends CloudDocAdapter {
       source,
       note,
       total,
-      page,
-      pageSize,
-      hasMore: end < total,
+      page: page || 1,
+      pageSize: pageSize || total,
+      hasMore,
     };
   }
 

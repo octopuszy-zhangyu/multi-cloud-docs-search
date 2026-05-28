@@ -80,6 +80,7 @@ const server = new McpServer(
 4. **输出格式**：返回 JSON 格式数据，包含 provider、product、priceInfo、source、note 等字段
 5. **工具调用次数限制（硬性限制）**：每个子Agent 的工具调用次数**必须控制在 15 次以内**。如果超过 15 次仍未获取到数据，必须立即停止并返回 JSON 格式的失败报告（包含 provider、product、error、reason 字段）。**超过 15 次调用仍未停止视为违规。**
 6. **提前终止策略**：如果连续 3 次工具调用都返回空结果或错误，应判断该路径不可行，立即切换策略或停止，而不是继续尝试
+7. **"文档不列价格"模式识别（重要）**：当搜索价格相关页面时，如果连续 2 次返回"需通过价格计算器实时查询"、"文档中不包含具体价格"、"请访问官网价格计算器"等类似提示，应立即停止搜索该厂商的价格，**直接调用 get_product_price 或 get_product_price_quick 获取价格数据**。**严禁反复尝试不同关键词确认同一结论**。
 
 ### 需要规划时使用 Plan 模式
 当任务涉及以下场景时，先调用 EnterPlanMode 进入规划模式：
@@ -134,20 +135,20 @@ const server = new McpServer(
 **不需要先 list_products 获取所有产品**：搜索价格时不需要遍历目录树，直接使用 get_product_price_quick 或 search_documents 搜索定价关键词即可。
 
 **价格数据注意事项**：
-- 阿里云、腾讯云、华为云的文档中通常只有折扣框架，不含精确基准价格（价格在独立价格计算器页面）
+- 阿里云、腾讯云、华为云的文档中通常只有折扣框架，不含精确基准价格（价格在独立价格计算器页面）。**遇到此类提示时，应直接调用 get_product_price 或 get_product_price_quick 获取价格数据，而非继续搜索文档**。
 - 天翼云、火山引擎的文档中包含价格表，可直接通过 search_documents + get_page_content 获取
 - AI 厂商（DeepSeek、MiniMax、Kimi、百炼）定价可通过 get_product_price 获取
-- 华为云等动态渲染的价格页面，WebFetch 无法抓取，应直接告知用户使用官网价格计算器
+- 华为云等动态渲染的价格页面，WebFetch 无法抓取，应直接调用 get_product_price 获取价格数据
 - **价格数据来源已标注**：华为云的价格数据会标注来源（官网价格计算器或文档），便于区分标准定价和参考价
-- **火山引擎 ECS 价格**：文档明确说明"价格信息需要通过价格计算器查看"，文档中不直接显示价格，无需遍历目录寻找价格表
-- **百度云 BCC 价格**：文档引用外部定价页面（cloud.baidu.com/publicity/bccplus.html），文档内无具体价格数字
-- **联通云 ECS 价格**：文档只有按日单价（vCPU ¥55.89/核/日, 内存 ¥11.50/GB/日），没有包月/包年价格
+- **火山引擎 ECS 价格**：文档明确说明"价格信息需要通过价格计算器查看"，文档中不直接显示价格，无需遍历目录寻找价格表，直接调用 get_product_price 获取
+- **百度云 BCC 价格**：文档引用外部定价页面（cloud.baidu.com/publicity/bccplus.html），文档内无具体价格数字，直接调用 get_product_price_quick 获取 URL
+- **联通云 ECS 价格**：文档只有按日单价（vCPU ¥55.89/核/日, 内存 ¥11.50/GB/日），没有包月/包年价格，直接调用 get_product_price 获取
 
 **已知数据缺失的厂商（无需遍历目录，直接返回提示）**：
-- **华为云 ECS**：定价数据位于外部页面 huaweicloud.com/pricing，文档系统中无具体价格。调用 get_product_price_quick 获取价格计算器 URL 后即可返回，无需遍历目录或搜索文档。如果 get_product_price 返回空，直接告知用户使用官网价格计算器。
-- **阿里云 ECS**：文档中只有计费模式说明，无具体实例价格。调用 get_product_price_quick 获取计费说明 URL 后即可返回。如需具体价格，告知用户访问 aliyun.com/price。
-- **百度云 BCC**：定价页面在外部（cloud.baidu.com/publicity/bccplus.html），文档中无具体价格。调用 get_product_price_quick 获取 URL 后即可返回。
-- **联通云 ECS**：定价页面返回 404，只能从搜索摘要中提取按日单价。调用 get_product_price_quick 后直接搜索"价格"关键词获取摘要即可，无需遍历目录。
+- **华为云 ECS**：定价数据位于外部页面 huaweicloud.com/pricing，文档系统中无具体价格。调用 get_product_price_quick 获取价格计算器 URL 后即可返回，无需遍历目录或搜索文档。如果 get_product_price 返回空，直接告知用户使用官网价格计算器。**遇到"请使用价格计算器"提示时，应调用 get_product_price 获取价格数据**。
+- **阿里云 ECS**：文档中只有计费模式说明，无具体实例价格。调用 get_product_price_quick 获取计费说明 URL 后即可返回。如需具体价格，告知用户访问 aliyun.com/price。**遇到"请使用价格计算器"提示时，应调用 get_product_price 获取价格数据**。
+- **百度云 BCC**：定价页面在外部（cloud.baidu.com/publicity/bccplus.html），文档中无具体价格。调用 get_product_price_quick 获取 URL 后即可返回。**遇到"请使用价格计算器"提示时，应调用 get_product_price 获取价格数据**。
+- **联通云 ECS**：定价页面返回 404，只能从搜索摘要中提取按日单价。调用 get_product_price_quick 后直接搜索"价格"关键词获取摘要即可，无需遍历目录。**遇到"请使用价格计算器"提示时，应调用 get_product_price 获取价格数据**。
 
 **ECS/CVM 4C8G 价格查询速查（必须按此顺序）**：
 
