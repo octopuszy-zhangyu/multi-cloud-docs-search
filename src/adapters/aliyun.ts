@@ -124,6 +124,7 @@ export class AliyunAdapter extends CloudDocAdapter {
 
   /**
    * 从产品级 llms.txt 搜索文档（标题+描述匹配）
+   * 当搜索结果为空时，自动尝试去掉具体规格词后重试
    */
   async searchDocuments(productId: string, keyword: string): Promise<SearchResult[]> {
     const text = await this.fetchText(`${BASE_URL}/zh/${productId}/llms.txt`);
@@ -146,6 +147,24 @@ export class AliyunAdapter extends CloudDocAdapter {
           title: entry.title,
           description: entry.description,
         });
+      }
+    }
+
+    // 关键词自动扩展：当搜索结果为空且关键词包含具体规格时，尝试去掉规格词重试
+    if (results.length === 0) {
+      const keywords = keyword.trim().split(/\s+/).filter(Boolean);
+      if (keywords.length > 1) {
+        // 过滤掉看起来像具体规格的词（包含数字+字母组合、纯数字、具体配置描述）
+        const specPattern = /^[\d.]+[cCgGmMkKtTbB]*$|^\d+[cC]\d+[gG]$|^\d+Mbps$|^\d+M$/;
+        const coreKeywords = keywords.filter(kw => !specPattern.test(kw) && !/^\d+$/.test(kw));
+
+        if (coreKeywords.length > 0 && coreKeywords.length < keywords.length) {
+          const coreKeyword = coreKeywords.join(" ");
+          const coreResults = await this.searchDocuments(productId, coreKeyword);
+          if (coreResults.length > 0) {
+            return coreResults;
+          }
+        }
       }
     }
 

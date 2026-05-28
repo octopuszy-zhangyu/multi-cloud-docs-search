@@ -50,10 +50,12 @@ const server = new McpServer(
 
 ## 核心原则（重要）
 
+0. **禁止 WebSearch fallback（重要）**：当 MCP 工具返回空结果或错误时，**禁止**调用 WebSearch 或其他外部搜索工具作为 fallback。应直接告知用户当前工具无法获取数据，并建议用户尝试其他方式（如更换关键词、更换云厂商等）。MCP 工具已覆盖主流云厂商文档，WebSearch 无法提供更准确的结果。
 1. **优先浏览目录，迫不得已再搜索**：先调用 get_document_toc 查看文档目录结构，定位到相关章节后，再决定是否调用 search_documents。search_documents 的关键词不宜太具体（如"价格 4C8G"会返回空），应使用宽泛关键词（如"计费""价格""规格"）。**关键词自动扩展**：当搜索结果为空时，系统会自动尝试去掉具体规格词（如 4C8G、5M）后重新搜索。
 2. **严格遵循 metadata → content 顺序**：必须先调用 get_page_metadata 获取 contentPath，再将 contentPath 传给 get_page_content。不能跳过 metadata 直接构造 URL。**contentPath 已统一为完整 URL 格式**，可直接传给 get_page_content。
 3. **并行 Agent 模式（重要）**：当需要查询多个云厂商时，必须为每个云厂商分别启动一个独立的 Agent 并行执行，而不是串行逐个查询。每个 Agent 负责一个云厂商的完整查询流程（list_products → get_document_toc → get_page_metadata → get_page_content），最后汇总所有 Agent 的结果。
 4. **list_products 结果可能过大**：阿里云等厂商的产品列表可能超过 token 限制，需分块读取或 grep 过滤。
+5. **get_document_toc 默认限制**：当不传 keyword 参数时，get_document_toc 默认只返回前 50 个页面。如需查看更多页面，请使用 keyword 参数过滤或调整 page/pageSize 参数。
 
 ## 工作模式
 
@@ -240,61 +242,75 @@ server.registerTool(
     }).strict(),
   },
   async ({ provider, keyword, page, pageSize }: { provider: string; keyword?: string; page?: number; pageSize?: number }) => {
-    const adapter = getAdapter(provider);
-    const keywords = keyword ? keyword.trim().split(/\s+/).filter(Boolean) : [];
-    const result = await adapter.listProducts({ keyword, page, pageSize });
+    try {
+      const adapter = getAdapter(provider);
+      const keywords = keyword ? keyword.trim().split(/\s+/).filter(Boolean) : [];
+      const result = await adapter.listProducts({ keyword, page, pageSize });
 
-    let items: Product[];
-    let total: number;
-    let currentPage: number;
-    let currentPageSize: number;
-    let hasMore: boolean;
+      let items: Product[];
+      let total: number;
+      let currentPage: number;
+      let currentPageSize: number;
+      let hasMore: boolean;
 
-    if ("items" in result) {
-      items = result.items;
-      total = result.total;
-      currentPage = result.page;
-      currentPageSize = result.pageSize;
-      hasMore = result.hasMore;
-    } else {
-      items = result as Product[];
-      total = items.length;
-      currentPage = 1;
-      currentPageSize = pageSize || 100;
-      hasMore = false;
-    }
+      if ("items" in result) {
+        items = result.items;
+        total = result.total;
+        currentPage = result.page;
+        currentPageSize = result.pageSize;
+        hasMore = result.hasMore;
+      } else {
+        items = result as Product[];
+        total = items.length;
+        currentPage = 1;
+        currentPageSize = pageSize || 100;
+        hasMore = false;
+      }
 
-    if (keywords.length > 0) {
-      const filtered = filterByKeywords(items, keywords);
+      if (keywords.length > 0) {
+        const filtered = filterByKeywords(items, keywords);
+        return {
+          content: [{
+            type: "text",
+            text: JSON.stringify({
+              items: filtered,
+              total: total,
+              page: currentPage,
+              pageSize: currentPageSize,
+              hasMore: hasMore,
+              message: filtered.length === 0
+                ? `未找到匹配 "${keyword}" 的产品，请尝试更宽泛的关键词`
+                : `共 ${total} 个产品，已过滤出 ${filtered.length} 个匹配 "${keyword}" 的产品`,
+            }, null, 2),
+          }],
+        };
+      }
+
       return {
         content: [{
           type: "text",
           text: JSON.stringify({
-            items: filtered,
-            total: total,
+            items,
+            total,
             page: currentPage,
             pageSize: currentPageSize,
-            hasMore: hasMore,
-            message: filtered.length === 0
-              ? `未找到匹配 "${keyword}" 的产品，请尝试更宽泛的关键词`
-              : `共 ${total} 个产品，已过滤出 ${filtered.length} 个匹配 "${keyword}" 的产品`,
+            hasMore,
+          }, null, 2),
+        }],
+      };
+    } catch (error) {
+      return {
+        content: [{
+          type: "text",
+          text: JSON.stringify({
+            error: true,
+            message: `查询失败: ${error instanceof Error ? error.message : String(error)}`,
+            provider,
+            suggestion: "请稍后重试，或检查网络连接",
           }, null, 2),
         }],
       };
     }
-
-    return {
-      content: [{
-        type: "text",
-        text: JSON.stringify({
-          items,
-          total,
-          page: currentPage,
-          pageSize: currentPageSize,
-          hasMore,
-        }, null, 2),
-      }],
-    };
   }
 );
 
@@ -307,70 +323,85 @@ server.registerTool(
       productId: z.string().describe("产品文档 ID"),
       keyword: z.string().optional().describe("精简关键词过滤（支持多个空格分隔，如 '价格 计费'），多个关键词用 AND 逻辑"),
       page: z.number().optional().describe("页码，默认 1"),
-      pageSize: z.number().optional().describe("每页条数，默认 200，最大 500"),
+      pageSize: z.number().optional().describe("每页条数，默认 50，最大 500"),
       topOnly: z.boolean().optional().describe("是否只返回顶层目录，默认 false"),
     }).strict(),
   },
   async ({ provider, productId, keyword, page, pageSize, topOnly }: { provider: string; productId: string; keyword?: string; page?: number; pageSize?: number; topOnly?: boolean }) => {
-    const adapter = getAdapter(provider);
-    const keywords = keyword ? keyword.trim().split(/\s+/).filter(Boolean) : [];
-    const result = await adapter.getDocumentToc(productId, { keyword, page, pageSize, topOnly });
+    try {
+      const adapter = getAdapter(provider);
+      const keywords = keyword ? keyword.trim().split(/\s+/).filter(Boolean) : [];
+      const result = await adapter.getDocumentToc(productId, { keyword, page, pageSize, topOnly });
 
-    let items: TocItem[];
-    let total: number;
-    let currentPage: number;
-    let currentPageSize: number;
-    let hasMore: boolean;
+      let items: TocItem[];
+      let total: number;
+      let currentPage: number;
+      let currentPageSize: number;
+      let hasMore: boolean;
 
-    if ("items" in result) {
-      items = result.items;
-      total = result.total;
-      currentPage = result.page;
-      currentPageSize = result.pageSize;
-      hasMore = result.hasMore;
-    } else {
-      items = result as TocItem[];
-      total = items.length;
-      currentPage = 1;
-      currentPageSize = pageSize || 200;
-      hasMore = false;
-    }
+      if ("items" in result) {
+        items = result.items;
+        total = result.total;
+        currentPage = result.page;
+        currentPageSize = result.pageSize;
+        hasMore = result.hasMore;
+      } else {
+        items = result as TocItem[];
+        total = items.length;
+        currentPage = 1;
+        currentPageSize = pageSize || 50;
+        hasMore = false;
+      }
 
-    if (topOnly) {
-      items = items.map(item => ({ pageId: item.pageId, title: item.title }));
-    }
+      if (topOnly) {
+        items = items.map(item => ({ pageId: item.pageId, title: item.title }));
+      }
 
-    if (keywords.length > 0) {
-      const filtered = filterByKeywords(items, keywords);
+      if (keywords.length > 0) {
+        const filtered = filterByKeywords(items, keywords);
+        return {
+          content: [{
+            type: "text",
+            text: JSON.stringify({
+              items: filtered,
+              total: total,
+              page: currentPage,
+              pageSize: currentPageSize,
+              hasMore: hasMore,
+              message: filtered.length === 0
+                ? `未找到匹配 "${keyword}" 的页面，请尝试更宽泛的关键词`
+                : `共 ${total} 个页面，已过滤出 ${filtered.length} 个匹配 "${keyword}" 的页面`,
+            }, null, 2),
+          }],
+        };
+      }
+
       return {
         content: [{
           type: "text",
           text: JSON.stringify({
-            items: filtered,
-            total: total,
+            items,
+            total,
             page: currentPage,
             pageSize: currentPageSize,
-            hasMore: hasMore,
-            message: filtered.length === 0
-              ? `未找到匹配 "${keyword}" 的页面，请尝试更宽泛的关键词`
-              : `共 ${total} 个页面，已过滤出 ${filtered.length} 个匹配 "${keyword}" 的页面`,
+            hasMore,
+          }, null, 2),
+        }],
+      };
+    } catch (error) {
+      return {
+        content: [{
+          type: "text",
+          text: JSON.stringify({
+            error: true,
+            message: `查询失败: ${error instanceof Error ? error.message : String(error)}`,
+            provider,
+            productId,
+            suggestion: "请稍后重试，或检查网络连接",
           }, null, 2),
         }],
       };
     }
-
-    return {
-      content: [{
-        type: "text",
-        text: JSON.stringify({
-          items,
-          total,
-          page: currentPage,
-          pageSize: currentPageSize,
-          hasMore,
-        }, null, 2),
-      }],
-    };
   }
 );
 
@@ -386,84 +417,100 @@ server.registerTool(
     }).strict(),
   },
   async ({ provider, productId, keyword, query }: { provider: string; productId: string; keyword?: string; query?: string }) => {
-    const adapter = getAdapter(provider);
     const searchKeyword = keyword || query || "";
-    if (!searchKeyword) {
-      return { content: [{ type: "text", text: "请提供搜索关键词（keyword 或 query 参数）" }] };
-    }
+    try {
+      const adapter = getAdapter(provider);
+      if (!searchKeyword) {
+        return { content: [{ type: "text", text: "请提供搜索关键词（keyword 或 query 参数）" }] };
+      }
 
-    const keywords = searchKeyword.trim().split(/\s+/).filter(Boolean);
-    const results = await adapter.searchDocuments(productId, searchKeyword);
+      const keywords = searchKeyword.trim().split(/\s+/).filter(Boolean);
+      const results = await adapter.searchDocuments(productId, searchKeyword);
 
-    let filteredResults = results;
-    if (keywords.length > 1) {
-      filteredResults = results.filter(item => {
-        const text = (item.title + " " + (item.description || "")).toLowerCase();
-        return keywords.every(kw => text.includes(kw.toLowerCase()));
-      });
-    }
+      let filteredResults = results;
+      if (keywords.length > 1) {
+        filteredResults = results.filter(item => {
+          const text = (item.title + " " + (item.description || "")).toLowerCase();
+          return keywords.every(kw => text.includes(kw.toLowerCase()));
+        });
+      }
 
-    // 关键词自动扩展：当搜索结果为空时，尝试去掉具体规格词（如 4C8G、5M 等），保留核心词
-    if (filteredResults.length === 0 && keywords.length > 1) {
-      // 过滤掉看起来像具体规格的词（包含数字+字母组合、纯数字、具体配置描述）
-      const specPattern = /^[\d.]+[cCgGmMkKtTbB]*$|^\d+[cC]\d+[gG]$|^\d+Mbps$|^\d+M$/;
-      const coreKeywords = keywords.filter(kw => !specPattern.test(kw) && !/^\d+$/.test(kw));
+      // 关键词自动扩展：当搜索结果为空时，尝试去掉具体规格词（如 4C8G、5M 等），保留核心词
+      if (filteredResults.length === 0 && keywords.length > 1) {
+        // 过滤掉看起来像具体规格的词（包含数字+字母组合、纯数字、具体配置描述）
+        const specPattern = /^[\d.]+[cCgGmMkKtTbB]*$|^\d+[cC]\d+[gG]$|^\d+Mbps$|^\d+M$/;
+        const coreKeywords = keywords.filter(kw => !specPattern.test(kw) && !/^\d+$/.test(kw));
 
-      if (coreKeywords.length > 0 && coreKeywords.length < keywords.length) {
-        const coreKeyword = coreKeywords.join(" ");
-        const coreResults = await adapter.searchDocuments(productId, coreKeyword);
+        if (coreKeywords.length > 0 && coreKeywords.length < keywords.length) {
+          const coreKeyword = coreKeywords.join(" ");
+          const coreResults = await adapter.searchDocuments(productId, coreKeyword);
 
-        if (coreResults.length > 0) {
-          return {
-            content: [{
-              type: "text",
-              text: JSON.stringify({
-                items: coreResults,
-                total: coreResults.length,
-                message: `原始关键词 "${searchKeyword}" 过于具体，已自动扩展为 "${coreKeyword}"，找到 ${coreResults.length} 个匹配页面。建议：使用宽泛关键词如"价格"、"计费"、"规格"等`,
-                autoExpanded: true,
-                originalKeyword: searchKeyword,
-                expandedKeyword: coreKeyword,
-              }, null, 2),
-            }],
-          };
+          if (coreResults.length > 0) {
+            return {
+              content: [{
+                type: "text",
+                text: JSON.stringify({
+                  items: coreResults,
+                  total: coreResults.length,
+                  message: `原始关键词 "${searchKeyword}" 过于具体，已自动扩展为 "${coreKeyword}"，找到 ${coreResults.length} 个匹配页面。建议：使用宽泛关键词如"价格"、"计费"、"规格"等`,
+                  autoExpanded: true,
+                  originalKeyword: searchKeyword,
+                  expandedKeyword: coreKeyword,
+                }, null, 2),
+              }],
+            };
+          }
+        }
+
+        // 如果核心词仍然为空，尝试只使用第一个非数字词
+        const firstWord = keywords.find(kw => !/^\d+$/.test(kw) && !specPattern.test(kw));
+        if (firstWord) {
+          const fallbackResults = await adapter.searchDocuments(productId, firstWord);
+          if (fallbackResults.length > 0) {
+            return {
+              content: [{
+                type: "text",
+                text: JSON.stringify({
+                  items: fallbackResults,
+                  total: fallbackResults.length,
+                  message: `原始关键词 "${searchKeyword}" 过于具体，已自动扩展为 "${firstWord}"，找到 ${fallbackResults.length} 个匹配页面。建议：使用宽泛关键词如"价格"、"计费"、"规格"等`,
+                  autoExpanded: true,
+                  originalKeyword: searchKeyword,
+                  expandedKeyword: firstWord,
+                }, null, 2),
+              }],
+            };
+          }
         }
       }
 
-      // 如果核心词仍然为空，尝试只使用第一个非数字词
-      const firstWord = keywords.find(kw => !/^\d+$/.test(kw) && !specPattern.test(kw));
-      if (firstWord) {
-        const fallbackResults = await adapter.searchDocuments(productId, firstWord);
-        if (fallbackResults.length > 0) {
-          return {
-            content: [{
-              type: "text",
-              text: JSON.stringify({
-                items: fallbackResults,
-                total: fallbackResults.length,
-                message: `原始关键词 "${searchKeyword}" 过于具体，已自动扩展为 "${firstWord}"，找到 ${fallbackResults.length} 个匹配页面。建议：使用宽泛关键词如"价格"、"计费"、"规格"等`,
-                autoExpanded: true,
-                originalKeyword: searchKeyword,
-                expandedKeyword: firstWord,
-              }, null, 2),
-            }],
-          };
-        }
-      }
+      return {
+        content: [{
+          type: "text",
+          text: JSON.stringify({
+            items: filteredResults,
+            total: filteredResults.length,
+            message: filteredResults.length === 0
+              ? `未找到同时匹配 "${searchKeyword}" 的页面。建议：使用更宽泛的关键词，如"价格"、"计费"、"规格"、"配置"等，不要使用"4C8G"等具体规格组合`
+              : `找到 ${filteredResults.length} 个匹配的页面`,
+          }, null, 2),
+        }],
+      };
+    } catch (error) {
+      return {
+        content: [{
+          type: "text",
+          text: JSON.stringify({
+            error: true,
+            message: `搜索失败: ${error instanceof Error ? error.message : String(error)}`,
+            provider,
+            productId,
+            keyword: searchKeyword,
+            suggestion: "请稍后重试，或尝试使用更宽泛的关键词",
+          }, null, 2),
+        }],
+      };
     }
-
-    return {
-      content: [{
-        type: "text",
-        text: JSON.stringify({
-          items: filteredResults,
-          total: filteredResults.length,
-          message: filteredResults.length === 0
-            ? `未找到同时匹配 "${searchKeyword}" 的页面。建议：使用更宽泛的关键词，如"价格"、"计费"、"规格"、"配置"等，不要使用"4C8G"等具体规格组合`
-            : `找到 ${filteredResults.length} 个匹配的页面`,
-        }, null, 2),
-      }],
-    };
   }
 );
 
@@ -477,40 +524,55 @@ server.registerTool(
     }).strict(),
   },
   async ({ provider, pageId }: { provider: string; pageId: string }) => {
-    const adapter = getAdapter(provider);
-    const metadata = await adapter.getPageMetadata(pageId);
+    try {
+      const adapter = getAdapter(provider);
+      const metadata = await adapter.getPageMetadata(pageId);
 
-    // 统一 contentPath 格式：确保返回的 contentPath 是完整可访问的 URL
-    // 对于返回相对路径的适配器，补全为完整 URL
-    if (metadata.contentPath && !metadata.contentPath.startsWith("http")) {
-      // 火山引擎的 contentPath 是 "productId/docId" 格式，通过 API 获取，不需要补全
-      // 移动云的 contentPath 是 hash 字符串，直接传给 get_page_content 即可
-      // 其他相对路径需要补全
-      if (provider === "volcengine" || provider === "ecloud") {
-        // 这些厂商的 contentPath 是特殊格式，不需要补全
-      } else if (metadata.contentPath.startsWith("/")) {
-        // 相对路径，补全为完整 URL
-        const baseUrls: Record<string, string> = {
-          "aliyun": "https://help.aliyun.com",
-          "bailian": "https://help.aliyun.com",
-          "tencent": "https://cloud.tencent.com",
-          "huawei": "https://support.huaweicloud.com",
-          "ctyun": "https://www.ctyun.cn",
-          "baidu": "https://cloud.baidu.com",
-          "deepseek": "https://api-docs.deepseek.com",
-          "glm": "https://docs.bigmodel.cn",
-          "minimax": "https://platform.minimaxi.com",
-          "kimi": "https://platform.kimi.com",
-          "cucloud": "https://support.cucloud.cn",
-        };
-        const baseUrl = baseUrls[provider];
-        if (baseUrl) {
-          metadata.contentPath = `${baseUrl}${metadata.contentPath}`;
+      // 统一 contentPath 格式：确保返回的 contentPath 是完整可访问的 URL
+      // 对于返回相对路径的适配器，补全为完整 URL
+      if (metadata.contentPath && !metadata.contentPath.startsWith("http")) {
+        // 火山引擎的 contentPath 是 "productId/docId" 格式，通过 API 获取，不需要补全
+        // 移动云的 contentPath 是 hash 字符串，直接传给 get_page_content 即可
+        // 其他相对路径需要补全
+        if (provider === "volcengine" || provider === "ecloud") {
+          // 这些厂商的 contentPath 是特殊格式，不需要补全
+        } else if (metadata.contentPath.startsWith("/")) {
+          // 相对路径，补全为完整 URL
+          const baseUrls: Record<string, string> = {
+            "aliyun": "https://help.aliyun.com",
+            "bailian": "https://help.aliyun.com",
+            "tencent": "https://cloud.tencent.com",
+            "huawei": "https://support.huaweicloud.com",
+            "ctyun": "https://www.ctyun.cn",
+            "baidu": "https://cloud.baidu.com",
+            "deepseek": "https://api-docs.deepseek.com",
+            "glm": "https://docs.bigmodel.cn",
+            "minimax": "https://platform.minimaxi.com",
+            "kimi": "https://platform.kimi.com",
+            "cucloud": "https://support.cucloud.cn",
+          };
+          const baseUrl = baseUrls[provider];
+          if (baseUrl) {
+            metadata.contentPath = `${baseUrl}${metadata.contentPath}`;
+          }
         }
       }
-    }
 
-    return { content: [{ type: "text", text: JSON.stringify(metadata, null, 2) }] };
+      return { content: [{ type: "text", text: JSON.stringify(metadata, null, 2) }] };
+    } catch (error) {
+      return {
+        content: [{
+          type: "text",
+          text: JSON.stringify({
+            error: true,
+            message: `获取页面元信息失败: ${error instanceof Error ? error.message : String(error)}`,
+            provider,
+            pageId,
+            suggestion: "请稍后重试，或检查 pageId 是否正确",
+          }, null, 2),
+        }],
+      };
+    }
   }
 );
 
@@ -524,9 +586,24 @@ server.registerTool(
     }).strict(),
   },
   async ({ provider, productId }: { provider: string; productId?: string }) => {
-    const adapter = getAdapter(provider);
-    const result = await adapter.getProductPrice(productId);
-    return { content: [{ type: "text", text: JSON.stringify(result, null, 2) }] };
+    try {
+      const adapter = getAdapter(provider);
+      const result = await adapter.getProductPrice(productId);
+      return { content: [{ type: "text", text: JSON.stringify(result, null, 2) }] };
+    } catch (error) {
+      return {
+        content: [{
+          type: "text",
+          text: JSON.stringify({
+            error: true,
+            message: `获取价格失败: ${error instanceof Error ? error.message : String(error)}`,
+            provider,
+            productId,
+            suggestion: "请稍后重试，或使用 get_product_price_quick 获取定价页面 URL",
+          }, null, 2),
+        }],
+      };
+    }
   }
 );
 
@@ -540,87 +617,106 @@ server.registerTool(
     }).strict(),
   },
   async ({ provider, productId }: { provider: string; productId?: string }) => {
-    // 已知的定价页面速查表
-    const priceQuickMap: Record<string, Record<string, { url: string; description: string }[]>> = {
-      "ctyun": {
-        "10027004": [{ url: "https://www.ctyun.cn/document/10027004", description: "天翼云电脑（政企版）价格" }],
-        "10026730": [{ url: "https://www.ctyun.cn/document/10026730", description: "弹性云主机 ECS 价格" }],
-        "11061839": [{ url: "https://www.ctyun.cn/document/11061839", description: "Token 服务价格" }],
-      },
-      "aliyun": {
-        "ecs": [{ url: "https://help.aliyun.com/zh/ecs/billing", description: "云服务器 ECS 计费说明（文档中无具体价格表，需访问 aliyun.com/price）" }],
-      },
-      "tencent": {
-        "cvm": [{ url: "https://buy.cloud.tencent.com/price/cvm/overview", description: "云服务器 CVM 价格概览" }],
-        "213": [{ url: "https://buy.cloud.tencent.com/price/cvm/overview", description: "云服务器 CVM 价格概览" }],
-      },
-      "huawei": {
-        "ecs": [{ url: "https://www.huaweicloud.com/pricing/calculator.html#/ecs", description: "弹性云服务器 ECS 价格计算器" }],
-        "maas": [{ url: "https://support.huaweicloud.com/price-maas/price-maas-0002.html", description: "MaaS 模型即服务价格" }],
-      },
-      "ecloud": {
-        "706": [{ url: "https://ecloud.10086.cn/op-help-center/doc/category/706", description: "云主机 ECS 价格" }],
-      },
-      "volcengine": {
-        "ECS": [{ url: "https://www.volcengine.com/pricing?product=ECS", description: "ECS 价格" }],
-      },
-      "deepseek": {
-        "api-docs": [{ url: "https://api-docs.deepseek.com/quick_start/pricing", description: "DeepSeek API 定价" }],
-      },
-      "minimax": {
-        "minimax-api": [{ url: "https://platform.minimaxi.com/docs/guides/pricing-paygo", description: "MiniMax 定价" }],
-      },
-      "kimi": {
-        "kimi-api": [{ url: "https://platform.kimi.com/docs/pricing", description: "Kimi API 定价" }],
-      },
-      "bailian": {
-        "model-studio": [{ url: "https://help.aliyun.com/zh/model-studio/billing", description: "百炼大模型服务平台计费说明" }],
-      },
-      "baidu": {
-        "BML": [{ url: "https://cloud.baidu.com/doc/BML/s/9kq7tfy4p", description: "BML 全功能AI开发平台价格" }],
-      },
-      "glm": {
-        "bigmodel": [{ url: "https://open.bigmodel.cn/pricing", description: "智谱 GLM 定价" }],
-      },
-    };
+    try {
+      // 已知的定价页面速查表
+      const priceQuickMap: Record<string, Record<string, { url: string; description: string }[]>> = {
+        "ctyun": {
+          "10027004": [{ url: "https://www.ctyun.cn/document/10027004", description: "天翼云电脑（政企版）价格" }],
+          "10026730": [{ url: "https://www.ctyun.cn/document/10026730", description: "弹性云主机 ECS 价格" }],
+          "11061839": [{ url: "https://www.ctyun.cn/document/11061839", description: "Token 服务价格" }],
+        },
+        "aliyun": {
+          "ecs": [{ url: "https://help.aliyun.com/zh/ecs/billing", description: "云服务器 ECS 计费说明（文档中无具体价格表，需访问 aliyun.com/price）" }],
+        },
+        "tencent": {
+          "cvm": [{ url: "https://buy.cloud.tencent.com/price/cvm/overview", description: "云服务器 CVM 价格概览" }],
+          "213": [{ url: "https://buy.cloud.tencent.com/price/cvm/overview", description: "云服务器 CVM 价格概览" }],
+        },
+        "huawei": {
+          "ecs": [{ url: "https://www.huaweicloud.com/pricing/calculator.html#/ecs", description: "弹性云服务器 ECS 价格计算器" }],
+          "maas": [{ url: "https://support.huaweicloud.com/price-maas/price-maas-0002.html", description: "MaaS 模型即服务价格" }],
+        },
+        "ecloud": {
+          "706": [{ url: "https://ecloud.10086.cn/op-help-center/doc/category/706", description: "云主机 ECS 价格" }],
+        },
+        "volcengine": {
+          "ECS": [{ url: "https://www.volcengine.com/pricing?product=ECS", description: "ECS 价格" }],
+        },
+        "deepseek": {
+          "api-docs": [{ url: "https://api-docs.deepseek.com/quick_start/pricing", description: "DeepSeek API 定价" }],
+        },
+        "minimax": {
+          "minimax-api": [{ url: "https://platform.minimaxi.com/docs/guides/pricing-paygo", description: "MiniMax 定价" }],
+        },
+        "kimi": {
+          "kimi-api": [{ url: "https://platform.kimi.com/docs/pricing", description: "Kimi API 定价" }],
+        },
+        "bailian": {
+          "model-studio": [{ url: "https://help.aliyun.com/zh/model-studio/billing", description: "百炼大模型服务平台计费说明" }],
+        },
+        "baidu": {
+          "BML": [{ url: "https://cloud.baidu.com/doc/BML/s/9kq7tfy4p", description: "BML 全功能AI开发平台价格" }],
+        },
+        "glm": {
+          "bigmodel": [{ url: "https://open.bigmodel.cn/pricing", description: "智谱 GLM 定价" }],
+        },
+        "cucloud": {
+          "128": [{ url: "https://support.cucloud.cn/document/128", description: "云服务器 ECS 价格" }],
+          "2357": [{ url: "https://support.cucloud.cn/document/2357", description: "AI服务平台 AISP 价格" }],
+        },
+      };
 
-    const providerMap = priceQuickMap[provider];
-    if (!providerMap) {
-      // 没有速查数据，回退到 get_product_price
-      const adapter = getAdapter(provider);
-      const result = await adapter.getProductPrice(productId);
-      return { content: [{ type: "text", text: JSON.stringify(result, null, 2) }] };
-    }
+      const providerMap = priceQuickMap[provider];
+      if (!providerMap) {
+        // 没有速查数据，回退到 get_product_price
+        const adapter = getAdapter(provider);
+        const result = await adapter.getProductPrice(productId);
+        return { content: [{ type: "text", text: JSON.stringify(result, null, 2) }] };
+      }
 
-    if (productId && providerMap[productId]) {
+      if (productId && providerMap[productId]) {
+        return {
+          content: [{
+            type: "text",
+            text: JSON.stringify({
+              provider,
+              productId,
+              quickLinks: providerMap[productId],
+              message: "以上为已知的定价页面 URL，可直接通过 get_page_metadata + get_page_content 获取价格信息，或使用 get_product_price 获取结构化价格数据",
+            }, null, 2),
+          }],
+        };
+      }
+
+      // 没有匹配的 productId，返回所有已知的定价页面
+      const allLinks = Object.entries(providerMap).flatMap(([pid, links]) =>
+        links.map(l => ({ productId: pid, ...l }))
+      );
+
       return {
         content: [{
           type: "text",
           text: JSON.stringify({
             provider,
+            quickLinks: allLinks,
+            message: "以上为已知的定价页面 URL。如需查询具体产品价格，请指定 productId 参数",
+          }, null, 2),
+        }],
+      };
+    } catch (error) {
+      return {
+        content: [{
+          type: "text",
+          text: JSON.stringify({
+            error: true,
+            message: `获取定价页面失败: ${error instanceof Error ? error.message : String(error)}`,
+            provider,
             productId,
-            quickLinks: providerMap[productId],
-            message: "以上为已知的定价页面 URL，可直接通过 get_page_metadata + get_page_content 获取价格信息，或使用 get_product_price 获取结构化价格数据",
+            suggestion: "请稍后重试，或直接访问官网定价页面",
           }, null, 2),
         }],
       };
     }
-
-    // 没有匹配的 productId，返回所有已知的定价页面
-    const allLinks = Object.entries(providerMap).flatMap(([pid, links]) =>
-      links.map(l => ({ productId: pid, ...l }))
-    );
-
-    return {
-      content: [{
-        type: "text",
-        text: JSON.stringify({
-          provider,
-          quickLinks: allLinks,
-          message: "以上为已知的定价页面 URL。如需查询具体产品价格，请指定 productId 参数",
-        }, null, 2),
-      }],
-    };
   }
 );
 
@@ -634,9 +730,24 @@ server.registerTool(
     }).strict(),
   },
   async ({ provider, contentPath }: { provider: string; contentPath: string }) => {
-    const adapter = getAdapter(provider);
-    const content = await adapter.getPageContent(contentPath);
-    return { content: [{ type: "text", text: content }] };
+    try {
+      const adapter = getAdapter(provider);
+      const content = await adapter.getPageContent(contentPath);
+      return { content: [{ type: "text", text: content }] };
+    } catch (error) {
+      return {
+        content: [{
+          type: "text",
+          text: JSON.stringify({
+            error: true,
+            message: `获取文档内容失败: ${error instanceof Error ? error.message : String(error)}`,
+            provider,
+            contentPath,
+            suggestion: "请稍后重试，或检查 contentPath 是否正确",
+          }, null, 2),
+        }],
+      };
+    }
   }
 );
 

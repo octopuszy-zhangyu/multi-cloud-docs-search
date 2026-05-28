@@ -50,6 +50,8 @@ export interface PriceResult {
   prices: PriceItem[];
   source: string;
   updateDate?: string;
+  message?: string;
+  note?: string;
 }
 
 /** 分页结果包装 */
@@ -81,6 +83,33 @@ export abstract class CloudDocAdapter {
   abstract readonly provider: string;
   /** 厂商中文名称，如 "天翼云"、"阿里云" */
   abstract readonly name: string;
+
+  /** 带超时的 fetch 请求，默认 15 秒超时 */
+  protected async fetchWithTimeout(url: string, options: RequestInit & { timeout?: number } = {}): Promise<Response> {
+    const { timeout = 15000, ...fetchOptions } = options;
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), timeout);
+    try {
+      const response = await fetch(url, { ...fetchOptions, signal: controller.signal });
+      return response;
+    } finally {
+      clearTimeout(timer);
+    }
+  }
+
+  /** 带超时和指数退避重试的 fetch 请求，默认重试 2 次 */
+  protected async fetchWithRetry(url: string, options: RequestInit & { timeout?: number } = {}, retries = 2): Promise<Response> {
+    for (let attempt = 0; attempt <= retries; attempt++) {
+      try {
+        return await this.fetchWithTimeout(url, options);
+      } catch (error) {
+        if (attempt === retries) throw error;
+        const delay = Math.min(1000 * Math.pow(2, attempt), 5000);
+        await new Promise(r => setTimeout(r, delay));
+      }
+    }
+    throw new Error("Unreachable");
+  }
 
   /** 获取所有产品文档列表 */
   abstract listProducts(options?: ListProductsOptions): Promise<Product[] | PaginatedResult<Product>>;

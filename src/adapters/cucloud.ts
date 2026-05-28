@@ -140,10 +140,27 @@ export class CucloudAdapter extends CloudDocAdapter {
       return { items: [], total: 0, page: 1, pageSize: 200, hasMore: false };
     }
 
-    const url = `${SEARCH_API}/product/queryAll?index=cms_document&pageNo=1&pageSize=50&keyword=${encodeURIComponent(product.name)}&productId=${productId}&referrer=${encodeURIComponent(SUPPORT_URL)}`;
-    const data = await this.fetchJson<SearchResponse>(url);
+    // 尝试多个关键词变体，确保能获取到文档列表
+    const keywords = [
+      product.name,
+      product.name.replace(/[（(].*[）)]/, ""),
+      ...product.name.split(/[（(]/).filter(s => s.trim().length > 0),
+    ].filter((v, i, a) => v && a.indexOf(v) === i);
 
-    if (!data.data?.docList) {
+    let data: SearchResponse | null = null;
+    for (const kw of keywords) {
+      try {
+        const url = `${SEARCH_API}/product/queryAll?index=cms_document&pageNo=1&pageSize=50&keyword=${encodeURIComponent(kw)}&productId=${productId}&referrer=${encodeURIComponent(SUPPORT_URL)}`;
+        data = await this.fetchJson<SearchResponse>(url);
+        if (data?.data?.docList && data.data.docList.length > 0) {
+          break;
+        }
+      } catch {
+        continue;
+      }
+    }
+
+    if (!data?.data?.docList) {
       return { items: [], total: 0, page: 1, pageSize: 200, hasMore: false };
     }
 
@@ -248,6 +265,14 @@ export class CucloudAdapter extends CloudDocAdapter {
       if (doc) {
         const title = doc.title.replace(/<[^>]+>/g, "");
         const content = doc.content.replace(/<[^>]+>/g, "");
+        return `# ${title}\n\n${content}`;
+      }
+
+      // 如果精确匹配失败，尝试使用第一个搜索结果
+      if (data.data.docList.length > 0) {
+        const firstDoc = data.data.docList[0];
+        const title = firstDoc.title.replace(/<[^>]+>/g, "");
+        const content = firstDoc.content.replace(/<[^>]+>/g, "");
         return `# ${title}\n\n${content}`;
       }
     }

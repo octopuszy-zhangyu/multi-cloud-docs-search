@@ -215,26 +215,52 @@ export class BaiduAdapter extends CloudDocAdapter {
     const prices: PriceItem[] = [];
 
     if (productId) {
-      // 百度云产品定价页面通常在 /doc/{productId}/pricing 或产品详情页
-      const priceUrls = [
-        `${BASE_URL}/doc/${productId}/pricing`,
-        `${BASE_URL}/doc/${productId}/price`,
-        `${BASE_URL}/doc/${productId}/index.html`,
-      ];
-
-      for (const url of priceUrls) {
-        try {
-          const html = await this.fetchHtml(url);
-          const $ = cheerio.load(html);
-          const content = $(".post__body").first();
-          const markdown = htmlToMarkdown(content.length > 0 ? content.html() || "" : html);
-          const parsed = this.parsePriceTable(markdown);
-          if (parsed.length > 0) {
-            prices.push(...parsed);
-            break;
+      // 先通过 searchDocuments 搜索"价格"关键词，定位定价页面
+      try {
+        const searchResults = await this.searchDocuments(productId, "价格");
+        for (const result of searchResults) {
+          try {
+            const url = `${BASE_URL}/doc/${result.pageId}`;
+            const html = await this.fetchHtml(url);
+            const $ = cheerio.load(html);
+            const content = $(".post__body").first();
+            const markdown = htmlToMarkdown(content.length > 0 ? content.html() || "" : html);
+            const parsed = this.parsePriceTable(markdown);
+            if (parsed.length > 0) {
+              prices.push(...parsed);
+              break;
+            }
+          } catch {
+            continue;
           }
-        } catch {
-          continue;
+        }
+      } catch {
+        // fall through to direct URL attempts
+      }
+
+      // 如果搜索没找到，尝试直接访问已知的定价页面 URL
+      if (prices.length === 0) {
+        const priceUrls = [
+          `${BASE_URL}/doc/${productId}/pricing`,
+          `${BASE_URL}/doc/${productId}/price`,
+          `${BASE_URL}/doc/${productId}/index.html`,
+          `${BASE_URL}/doc/${productId}/s/`,  // 百度云定价页面可能是 /doc/BCC/s/xxx 格式
+        ];
+
+        for (const url of priceUrls) {
+          try {
+            const html = await this.fetchHtml(url);
+            const $ = cheerio.load(html);
+            const content = $(".post__body").first();
+            const markdown = htmlToMarkdown(content.length > 0 ? content.html() || "" : html);
+            const parsed = this.parsePriceTable(markdown);
+            if (parsed.length > 0) {
+              prices.push(...parsed);
+              break;
+            }
+          } catch {
+            continue;
+          }
         }
       }
     }
