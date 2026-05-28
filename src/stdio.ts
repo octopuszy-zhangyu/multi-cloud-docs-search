@@ -78,8 +78,8 @@ const server = new McpServer(
 2. **禁止输出任何中间思考过程**：严禁输出"让我整理一下"、"现在我有了足够的信息"、"让我看看"、"好的"、"首先"等中间思考过程文字。子Agent 的最终输出必须是一个纯 JSON 对象，不包含任何前缀、后缀、解释性文字
 3. **禁止重复数据**：同一个数据表格只输出一次
 4. **输出格式**：返回 JSON 格式数据，包含 provider、product、priceInfo、source、note 等字段
-5. **工具调用次数限制（硬性限制）**：每个子Agent 的工具调用次数**必须控制在 15 次以内**。如果超过 15 次仍未获取到数据，必须立即停止并返回 JSON 格式的失败报告（包含 provider、product、error、reason 字段）。**超过 15 次调用仍未停止视为违规。**
-6. **提前终止策略**：如果连续 3 次工具调用都返回空结果或错误，应判断该路径不可行，立即切换策略或停止，而不是继续尝试
+5. **工具调用次数限制（硬性限制）**：每个子Agent 的工具调用次数**必须控制在 12 次以内**。如果超过 12 次仍未获取到数据，必须立即停止并返回 JSON 格式的失败报告（包含 provider、product、error、reason 字段）。**超过 12 次调用仍未停止视为违规。**
+6. **提前终止策略（关键优化）**：如果连续 2 次工具调用都返回空结果或错误，立即判断该路径不可行并切换策略或停止，而不是继续尝试。
 7. **"文档不列价格"模式识别（重要）**：当搜索价格相关页面时，如果连续 2 次返回"需通过价格计算器实时查询"、"文档中不包含具体价格"、"请访问官网价格计算器"等类似提示，应立即停止搜索该厂商的价格，**直接调用 get_product_price 或 get_product_price_quick 获取价格数据**。**严禁反复尝试不同关键词确认同一结论**。
 
 ### 需要规划时使用 Plan 模式
@@ -135,6 +135,7 @@ const server = new McpServer(
 **不需要先 list_products 获取所有产品**：搜索价格时不需要遍历目录树，直接使用 get_product_price_quick 或 search_documents 搜索定价关键词即可。
 
 **价格数据注意事项**：
+- **dataStatus 字段说明**：get_product_price 返回结果中的 dataStatus 字段标记数据完整性：complete=有完整价格数据, partial=部分数据, no_price=文档无价格（需访问外部定价页）, no_data=无数据。子Agent 应根据 dataStatus 决定下一步操作，dataStatus 为 no_price 或 no_data 时立即停止搜索并返回结果。
 - 阿里云、腾讯云、华为云的文档中通常只有折扣框架，不含精确基准价格（价格在独立价格计算器页面）。**遇到此类提示时，应直接调用 get_product_price 或 get_product_price_quick 获取价格数据，而非继续搜索文档**。
 - 天翼云、火山引擎的文档中包含价格表，可直接通过 search_documents + get_page_content 获取
 - AI 厂商（DeepSeek、MiniMax、Kimi、百炼）定价可通过 get_product_price 获取
@@ -152,16 +153,16 @@ const server = new McpServer(
 
 **ECS/CVM 4C8G 价格查询速查（必须按此顺序）**：
 
-| 厂商 | 首选方式 | 备选方式 | 说明 | 预期工具调用次数 |
-|------|---------|---------|------|----------------|
-| 天翼云 | get_product_price(provider="ctyun", productId="10027004") | get_product_price_quick | 文档含价格表 | 2-3 次 |
-| 火山引擎 | get_product_price(provider="volcengine", productId="ECS") | get_product_price_quick | GetTable API 返回完整定价表格 | 2-3 次 |
-| 腾讯云 | **get_product_price(provider="tencent", productId="cvm")** | get_product_price_quick | workbench API 返回全量 CVM 实例价格 | 2-3 次 |
-| 阿里云 | get_product_price_quick(provider="aliyun", productId="ecs") | get_product_price | 文档无价格表，需访问官网定价页。**无需遍历目录** | 1-2 次 |
-| 华为云 | get_product_price(provider="huawei", productId="ecs") | get_product_price_quick | 价格计算器 API 返回标准定价。**如果返回空，直接告知用户使用官网价格计算器** | 2-3 次 |
-| 移动云 | get_product_price(provider="ecloud", productId="706") | search_documents | 文档含价格信息 | 3-5 次 |
-| 联通云 | get_product_price_quick(provider="cucloud", productId="128") | search_documents | 文档含按日单价。**定价页面 404，从搜索摘要提取** | 3-5 次 |
-| 百度云 | get_product_price_quick(provider="baidu", productId="bcc") | search_documents | 文档引用外部定价页。**无需遍历目录** | 1-2 次 |
+| 厂商 | 首选方式 | 备选方式 | 说明 | 预期调用次数 | dataStatus |
+|------|---------|---------|------|------------|-----------|
+| 天翼云 | get_product_price(provider="ctyun", productId="10027004") | get_product_price_quick | 文档含价格表 | 2-3 次 | complete |
+| 火山引擎 | get_product_price(provider="volcengine", productId="ECS") | get_product_price_quick | GetTable API 返回完整定价表格 | 2-3 次 | complete |
+| 腾讯云 | **get_product_price(provider="tencent", productId="cvm")** | get_product_price_quick | workbench API 返回全量 CVM 实例价格 | 2-3 次 | complete |
+| 阿里云 | get_product_price_quick(provider="aliyun", productId="ecs") | get_product_price | 文档无价格表，需访问官网定价页。**无需遍历目录** | 1-2 次 | no_price |
+| 华为云 | get_product_price(provider="huawei", productId="ecs") | get_product_price_quick | 价格计算器 API 返回标准定价。**如果返回空，直接告知用户使用官网价格计算器** | 2-3 次 | complete/no_price |
+| 移动云 | get_product_price(provider="ecloud", productId="706") | search_documents | 文档含价格信息 | 3-5 次 | complete |
+| 联通云 | get_product_price_quick(provider="cucloud", productId="128") | search_documents | 文档含按日单价。**定价页面 404，从搜索摘要提取** | 3-5 次 | partial |
+| 百度云 | get_product_price_quick(provider="baidu", productId="bcc") | search_documents | 文档引用外部定价页。**无需遍历目录** | 1-2 次 | no_price |
 
 **必须使用 get_product_price 获取价格的厂商**：腾讯云、天翼云、火山引擎、华为云、阿里云（通过 get_product_price_quick 获取 URL 后访问）。
 
@@ -468,7 +469,7 @@ server.registerTool(
         });
       }
 
-      // 关键词自动扩展：当搜索结果为空时，尝试去掉具体规格词（如 4C8G、5M 等），保留核心词
+      // 关键词自动扩展：当搜索结果为空时，尝试多种扩展策略
       if (filteredResults.length === 0) {
         // 过滤掉看起来像具体规格的词（包含数字+字母组合、纯数字、具体配置描述）
         const specPattern = /^[\d.]+[cCgGmMkKtTbB]*$|^\d+[cC]\d+[gG]$|^\d+Mbps$|^\d+M$|^[\d.]+[gG][hH][zZ]$|^[\d.]+[cC][oO][rR][eE]$/;
@@ -490,7 +491,21 @@ server.registerTool(
           expansionAttempts.push(coreKeywords[0]);
         }
 
-        // 第三级：尝试常用宽泛词
+        // 第三级：实例规格变体扩展（4C8G → xlarge/large/c7等）
+        const specVariants: Record<string, string[]> = {
+          "4c8g": ["xlarge", "large", "c7", "规格", "实例类型", "配置"],
+          "2c4g": ["medium", "small", "规格", "实例类型", "配置"],
+          "8c16g": ["2xlarge", "xlarge", "规格", "实例类型", "配置"],
+        };
+        for (const [spec, variants] of Object.entries(specVariants)) {
+          if (searchKeyword.toLowerCase().includes(spec)) {
+            for (const variant of variants) {
+              expansionAttempts.push(variant);
+            }
+          }
+        }
+
+        // 第四级：尝试常用宽泛词
         if (keywords.some(kw => /价|计费|定价|收费|规格|配置|套餐|费用/i.test(kw))) {
           // 已经包含宽泛词，不需要再尝试
         } else if (expansionAttempts.length === 0) {

@@ -56,6 +56,8 @@ export interface PriceResult {
   page?: number;
   pageSize?: number;
   hasMore?: boolean;
+  /** 数据完整性标记：complete=有完整价格数据, partial=部分数据, no_price=文档无价格, no_data=无数据 */
+  dataStatus?: "complete" | "partial" | "no_price" | "no_data";
 }
 
 /** 价格查询选项 */

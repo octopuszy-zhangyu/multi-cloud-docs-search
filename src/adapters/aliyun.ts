@@ -362,6 +362,7 @@ export class AliyunAdapter extends CloudDocAdapter {
       prices,
       source: productId ? `${BASE_URL}/zh/${productId}/billing` : `${BASE_URL}/price`,
       updateDate,
+      dataStatus: prices.length > 0 && prices[0].price > 0 ? "complete" : "no_price",
     };
   }
 }

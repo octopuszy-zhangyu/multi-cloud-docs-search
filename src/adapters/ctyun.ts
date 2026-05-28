@@ -322,8 +322,18 @@ export class CtyunAdapter extends CloudDocAdapter {
 
       // 自动计算常见规格总价（当文档只有组件单价时）
       result.prices.push(...this.calculateCommonSpecs(result.prices, result.source));
+
+      // 标记数据状态
+      if (result.prices.length > 0 && result.prices[0].price > 0) {
+        result.dataStatus = "complete";
+      } else if (result.prices.length > 0 && result.prices[0].price === 0) {
+        result.dataStatus = "no_price";
+      } else {
+        result.dataStatus = "no_data";
+      }
     } catch {
       // 如果搜索失败，返回空结果
+      result.dataStatus = "no_data";
     }
 
     return result;

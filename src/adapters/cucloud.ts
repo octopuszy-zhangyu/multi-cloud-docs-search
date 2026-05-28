@@ -395,6 +395,9 @@ export class CucloudAdapter extends CloudDocAdapter {
       // Return empty prices if unable to fetch
     }
 
+    // 设置数据完整性标记
+    result.dataStatus = result.prices.length > 0 ? "partial" : "no_data";
+
     return result;
   }
 

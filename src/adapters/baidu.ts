@@ -260,7 +260,16 @@ export class BaiduAdapter extends CloudDocAdapter {
         source: `${BASE_URL}/publicity/bccplus.html`,
         updateDate: undefined,
         note: "百度云 BCC 文档中无具体实例价格，定价页面在外部（cloud.baidu.com/publicity/bccplus.html）。请访问该页面获取具体价格，或使用 get_product_price_quick 获取定价页面 URL。",
+        dataStatus: "no_price",
       };
+    }
+
+    // 标记数据状态
+    let dataStatus: "complete" | "partial" | "no_price" | "no_data" = "no_data";
+    if (prices.length > 0 && prices[0].price > 0) {
+      dataStatus = "complete";
+    } else if (prices.length > 0 && prices[0].price === 0) {
+      dataStatus = "no_price";
     }
 
     return {
@@ -269,6 +278,7 @@ export class BaiduAdapter extends CloudDocAdapter {
       prices,
       source: productId ? `${BASE_URL}/doc/${productId}/pricing` : `${BASE_URL}/doc/index.html`,
       updateDate: undefined,
+      dataStatus,
     };
   }
 }

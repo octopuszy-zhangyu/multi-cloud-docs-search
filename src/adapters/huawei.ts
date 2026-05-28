@@ -233,6 +233,7 @@ export class HuaweiAdapter extends CloudDocAdapter {
           prices,
           source,
           note: "华为云价格数据位于外部价格计算器页面，文档系统中不包含具体价格。请访问华为云官网价格计算器查询实时价格。",
+          dataStatus: "no_price",
         };
       }
 
@@ -335,6 +336,7 @@ export class HuaweiAdapter extends CloudDocAdapter {
       page: page || 1,
       pageSize: pageSize || total,
       hasMore,
+      dataStatus: prices.length > 0 ? "complete" : "no_price",
     };
   }
 

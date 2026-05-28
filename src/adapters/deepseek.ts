@@ -278,12 +278,21 @@ export class DeepseekAdapter extends CloudDocAdapter {
     const markdown = htmlToMarkdown(mainContent);
     const prices = this.parsePriceTable(markdown);
 
+    // 标记数据状态
+    let dataStatus: "complete" | "partial" | "no_price" | "no_data" = "no_data";
+    if (prices.length > 0 && prices[0].price > 0) {
+      dataStatus = "complete";
+    } else if (prices.length > 0 && prices[0].price === 0) {
+      dataStatus = "no_price";
+    }
+
     return {
       provider: this.provider,
       name: this.name,
       prices,
       source: "https://api-docs.deepseek.com/quick_start/pricing",
       updateDate: undefined,
+      dataStatus,
     };
   }
 }

@@ -321,12 +321,21 @@ export class VolcengineAdapter extends CloudDocAdapter {
       console.error("获取火山引擎价格信息失败:", error);
     }
 
+    // 标记数据状态
+    let dataStatus: PriceResult["dataStatus"] = "no_data";
+    if (prices.length > 0 && prices[0].price > 0) {
+      dataStatus = "complete";
+    } else if (prices.length > 0 && prices[0].price === 0) {
+      dataStatus = "no_price";
+    }
+
     return {
       provider: this.provider,
       name: this.name,
       prices,
       source,
       updateDate: undefined,
+      dataStatus,
     };
   }
 

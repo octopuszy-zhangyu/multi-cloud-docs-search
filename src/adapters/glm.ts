@@ -323,11 +323,20 @@ export class GlmAdapter extends CloudDocAdapter {
       if (pricingContent.length > 50) {
         const prices = this.parsePriceTable(pricingContent);
         if (prices.length > 0) {
+          // 标记数据状态
+          let dataStatus: "complete" | "partial" | "no_price" | "no_data" = "no_data";
+          if (prices.length > 0 && prices[0].price > 0) {
+            dataStatus = "complete";
+          } else if (prices.length > 0 && prices[0].price === 0) {
+            dataStatus = "no_price";
+          }
+
           return {
             provider: this.provider,
             name: this.name,
             prices,
             source: "https://open.bigmodel.cn/pricing",
+            dataStatus,
           };
         }
       }
@@ -343,6 +352,7 @@ export class GlmAdapter extends CloudDocAdapter {
       source: "https://open.bigmodel.cn/pricing",
       message: "智谱 GLM 定价页面（open.bigmodel.cn/pricing）为 JS 动态渲染的 SPA，无法通过普通 HTTP 请求抓取。建议直接访问 https://open.bigmodel.cn/pricing 查看最新价格。如需程序化获取，可尝试通过 get_page_content 获取定价相关文档页面。",
       note: "定价页面为 SPA，需浏览器渲染，无法直接抓取",
+      dataStatus: "no_data",
     };
   }
 }

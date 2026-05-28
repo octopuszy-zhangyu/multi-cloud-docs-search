@@ -492,6 +492,15 @@ export class EcloudAdapter extends CloudDocAdapter {
       // Return empty prices if unable to fetch
     }
 
+    // 标记数据状态
+    if (result.prices.length > 0 && result.prices[0].price > 0) {
+      result.dataStatus = "complete";
+    } else if (result.prices.length > 0 && result.prices[0].price === 0) {
+      result.dataStatus = "no_price";
+    } else {
+      result.dataStatus = "no_data";
+    }
+
     return result;
   }
 }
