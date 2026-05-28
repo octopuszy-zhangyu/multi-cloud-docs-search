@@ -104,22 +104,31 @@ const server = new McpServer(
 
 ### 价格查询流程（当用户询问价格时）
 
-**优先从文档目录定位定价页面**（推荐）：
-1. 获取产品列表：调用 list_products 获取产品 productId（可并行查询多个厂商）
-2. 获取文档目录：调用 get_document_toc 查看目录，寻找"计费说明""价格""定价""计费"等章节
-3. 定位定价页面：从目录中找到定价相关章节的 pageId
-4. 获取定价页面内容：调用 get_page_metadata → get_page_content 获取定价页面 Markdown 内容
-5. 提取价格表：从 Markdown 内容中解析价格表格
-6. 总结回答
+**价格查询三步法（重要）**：
+1. **先 search_documents 搜索宽泛关键词**：调用 search_documents({ provider: "xxx", productId: "xxx", keyword: "价格" }) — **不要先遍历产品目录**，不要用"4C8G"等具体规格作为搜索词
+2. **搜索失败逐级放宽**：先搜"价格"，空则搜"计费"，再空则搜"规格"；不要反复用同类型的关键词
+3. **get_product_price 回退**：文档找不到价格时调用 get_product_price
 
-**搜索回退**（目录中找不到定价章节时）：
-1. 调用 search_documents({ provider: "xxx", productId: "xxx", keyword: "计费" }) 搜索定价相关页面（用宽泛关键词）
-2. 获取搜索结果中的 pageId，调用 get_page_metadata → get_page_content
-3. 提取价格信息
+**不需要先 list_products 获取所有产品**：搜索价格时不需要遍历目录树，直接 search_documents 搜索定价关键词即可。
 
-**get_product_price 回退**（文档中找不到价格时）：
-1. 调用 get_product_price({ provider: "xxx" }) 获取价格数据
-2. 如果返回空，尝试带 productId 调用：get_product_price({ provider: "xxx", productId: "xxx" })
+**价格数据注意事项**：
+- 阿里云、腾讯云、华为云的文档中通常只有折扣框架，不含精确基准价格（价格在独立价格计算器页面）
+- 天翼云、火山引擎的文档中包含价格表，可直接通过 search_documents + get_page_content 获取
+- AI 厂商（DeepSeek、MiniMax、Kimi、百炼）定价可通过 get_product_price 获取
+- 华为云等动态渲染的价格页面，WebFetch 无法抓取，应直接告知用户使用官网价格计算器
+
+**ECS/CVM 4C8G 价格查询速查**：
+
+| 厂商 | 获取方式 | 说明 |
+|------|---------|------|
+| 天翼云 | search_documents(productId="10026730", keyword="价格") → get_page_metadata → get_page_content | 文档含价格表 |
+| 火山引擎 | search_documents(productId="ECS", keyword="价格") → get_page_metadata → get_page_content | 火山引擎 GetTable API 返回完整定价表格 |
+| 腾讯云 | **直接使用 get_product_price(provider="tencent", productId="cvm")** 或 get_product_price(provider="tencent", productId="213") | workbench API 返回全量 CVM 实例价格（含按量和包年包月） |
+| 阿里云 | search_documents(productId="ecs", keyword="价格") 只能获取折扣框架，基准价格在独立计算器页面 |
+| 华为云 | search_documents(productId="ecs", keyword="价格") 只能获取规格清单，具体价格需联系销售或官网计算器 |
+| 移动云 | search_documents(productId="706", keyword="价格") → get_page_content(hash) | 文档含价格信息 |
+
+**不要对 get_product_price 已覆盖的厂商额外搜索**：腾讯云 CVM 价格直接通过 get_product_price 获取，无需搜索文档目录。
 
 ## 各厂商特殊说明
 
@@ -220,7 +229,7 @@ const server = new McpServer(
 server.registerTool(
   "list_products",
   {
-    description: "获取指定云厂商的产品文档列表，返回产品名称和对应的 productId。支持关键词过滤（多个空格分隔的关键词用 AND 逻辑）和分页",
+    description: "获取指定云厂商的产品文档列表，返回产品名称和对应的 productId。支持关键词过滤（多个空格分隔的关键词用 AND 逻辑）和分页。支持的 provider：ctyun(天翼云), aliyun(阿里云), volcengine(火山引擎), tencent(腾讯云), huawei(华为云), ecloud(移动云), cucloud(联通云), bailian(阿里云百炼), baidu(百度云), deepseek(DeepSeek), glm(智谱GLM), minimax(MiniMax), kimi(月之暗面Kimi)。别名：tencentcloud→tencent, huaweicloud→huawei, alibaba→aliyun, cmcc→ecloud, chinaunicom→cucloud",
     inputSchema: z.object({
       provider: z.string().describe("云厂商标识，如 'ctyun'"),
       keyword: z.string().optional().describe("精简关键词过滤（支持多个空格分隔，如 'ecs cvm'），多个关键词用 AND 逻辑（必须全部匹配）"),
@@ -399,7 +408,7 @@ server.registerTool(
           items: filteredResults,
           total: filteredResults.length,
           message: filteredResults.length === 0
-            ? `未找到同时匹配 "${searchKeyword}" 的页面`
+            ? `未找到同时匹配 "${searchKeyword}" 的页面。建议：使用更宽泛的关键词，如"价格"、"计费"、"规格"、"配置"等，不要使用"4C8G"等具体规格组合`
             : `找到 ${filteredResults.length} 个匹配的页面`,
         }, null, 2),
       }],
@@ -426,10 +435,10 @@ server.registerTool(
 server.registerTool(
   "get_product_price",
   {
-    description: "获取指定云厂商的产品价格信息。不传 productId 则返回所有产品价格概览",
+    description: "获取指定云厂商的产品价格信息。不传 productId 则返回所有产品价格概览。支持精确价格的厂商：腾讯云 CVM（productId 传 \"cvm\" 或 \"213\"）、天翼云云电脑（productId 传 \"10027004\"）、AI 厂商（DeepSeek、MiniMax、Kimi、百炼）。阿里云、华为云文档不含精确价格，需使用官网价格计算器",
     inputSchema: z.object({
       provider: z.string().describe("云厂商标识"),
-      productId: z.string().optional().describe("产品 ID（可选，不传则返回所有产品价格概览）"),
+      productId: z.string().optional().describe("产品 ID（可选，不传则返回所有产品价格概览）。腾讯云传 \"cvm\" 或 \"213\"，天翼云传 \"10027004\"（云电脑）或 \"11061839\"（Token 服务）"),
     }).strict(),
   },
   async ({ provider, productId }: { provider: string; productId?: string }) => {
