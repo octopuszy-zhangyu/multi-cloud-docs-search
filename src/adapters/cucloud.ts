@@ -239,8 +239,8 @@ export class CucloudAdapter extends CloudDocAdapter {
   async getPageContent(contentPath: string): Promise<string> {
     const pageId = contentPath.match(/\/(\d+)\.html/)?.[1] || contentPath;
 
-    // 通过搜索 API 获取文档内容
-    const url = `${SEARCH_API}/product/queryAll?index=cms_document&pageNo=1&pageSize=50&keyword=&referrer=${encodeURIComponent(SUPPORT_URL)}`;
+    // 通过搜索 API 用 pageId 作为关键词获取文档内容
+    const url = `${SEARCH_API}/product/queryAll?index=cms_document&pageNo=1&pageSize=50&keyword=${encodeURIComponent(pageId)}&referrer=${encodeURIComponent(SUPPORT_URL)}`;
     const data = await this.fetchJson<SearchResponse>(url);
 
     if (data.data?.docList) {
