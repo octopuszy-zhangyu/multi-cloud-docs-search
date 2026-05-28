@@ -25,14 +25,16 @@ export class KimiAdapter extends CloudDocAdapter {
     /**
      * Kimi 只有一个产品：Kimi API 文档
      */
-    async listProducts() {
-        return [
+    async listProducts(options) {
+        const allProducts = [
             {
                 productId: "kimi-api",
                 name: "Kimi API 文档",
                 description: "月之暗面 Kimi 开放平台 API 文档",
             },
         ];
+        const filtered = this.filterByKeywords(allProducts, options?.keyword);
+        return this.paginate(filtered, options?.page ?? 1, options?.pageSize ?? 100);
     }
     /**
      * 从 llms.txt 解析文档目录
@@ -42,7 +44,7 @@ export class KimiAdapter extends CloudDocAdapter {
      *   - 页面标题: /docs/page-path
      *   - 页面标题: /docs/page-path: 描述
      */
-    async getDocumentToc(productId) {
+    async getDocumentToc(productId, options) {
         const text = await this.fetchText(LLMS_TXT_URL);
         const lines = text.split("\n");
         const items = [];
@@ -73,7 +75,12 @@ export class KimiAdapter extends CloudDocAdapter {
                 });
             }
         }
-        return items;
+        const filtered = this.filterByKeywords(items, options?.keyword);
+        // 如果 topOnly 为 true，剥离 children
+        const topItems = options?.topOnly
+            ? filtered.map(({ children: _, ...item }) => item)
+            : filtered;
+        return this.paginate(topItems, options?.page ?? 1, options?.pageSize ?? 200);
     }
     /**
      * 遍历文档目录，按标题匹配关键词
@@ -82,7 +89,7 @@ export class KimiAdapter extends CloudDocAdapter {
         const toc = await this.getDocumentToc(productId);
         const lowerKeyword = keyword.toLowerCase();
         const results = [];
-        for (const item of toc) {
+        for (const item of toc.items) {
             if (item.title.toLowerCase().includes(lowerKeyword)) {
                 results.push({
                     pageId: item.pageId,
@@ -134,6 +141,34 @@ export class KimiAdapter extends CloudDocAdapter {
             .join("\n")
             .trim();
         return cleaned || "(空内容)";
+    }
+    /**
+     * 按关键词过滤条目（AND 逻辑，大小写不敏感）
+     */
+    filterByKeywords(items, keyword) {
+        if (!keyword)
+            return items;
+        const keywords = keyword.trim().split(/\s+/).filter(Boolean);
+        if (keywords.length === 0)
+            return items;
+        return items.filter((item) => {
+            const text = (item.name || item.title || "").toLowerCase();
+            return keywords.every((kw) => text.includes(kw.toLowerCase()));
+        });
+    }
+    /**
+     * 对数组进行分页包装
+     */
+    paginate(items, page = 1, pageSize = 100) {
+        const start = (page - 1) * pageSize;
+        const paged = items.slice(start, start + pageSize);
+        return {
+            items: paged,
+            total: items.length,
+            page,
+            pageSize,
+            hasMore: start + pageSize < items.length,
+        };
     }
     /**
      * 从 Markdown 表格中解析价格数据

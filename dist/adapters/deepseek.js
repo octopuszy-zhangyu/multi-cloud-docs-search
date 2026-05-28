@@ -45,16 +45,18 @@ export class DeepseekAdapter extends CloudDocAdapter {
         });
         return urls;
     }
-    async listProducts() {
-        return [
+    async listProducts(options) {
+        const allProducts = [
             {
                 productId: "api-docs",
                 name: "DeepSeek API 文档",
                 description: "DeepSeek API 官方文档",
             },
         ];
+        const filtered = this.filterByKeywords(allProducts, options?.keyword);
+        return this.paginate(filtered, options?.page, options?.pageSize);
     }
-    async getDocumentToc(productId) {
+    async getDocumentToc(productId, options) {
         const urls = await this.fetchSitemapUrls();
         // 按路径深度构建树形结构
         const items = [];
@@ -81,10 +83,42 @@ export class DeepseekAdapter extends CloudDocAdapter {
             }
             items.push(tocItem);
         }
-        return items;
+        // Apply keyword filter
+        let filtered = items;
+        if (options?.keyword) {
+            filtered = this.filterByKeywords(items, options.keyword);
+        }
+        // Strip children if topOnly
+        if (options?.topOnly) {
+            filtered = filtered.map(item => ({ pageId: item.pageId, title: item.title }));
+        }
+        return this.paginate(filtered, options?.page, options?.pageSize ?? 200);
+    }
+    filterByKeywords(items, keyword) {
+        if (!keyword)
+            return items;
+        const keywords = keyword.trim().split(/\s+/).filter(Boolean);
+        if (keywords.length === 0)
+            return items;
+        return items.filter(item => {
+            const text = (item.name || item.title || "").toLowerCase();
+            return keywords.every(kw => text.includes(kw.toLowerCase()));
+        });
+    }
+    paginate(items, page = 1, pageSize = 100) {
+        const start = (page - 1) * pageSize;
+        const paged = items.slice(start, start + pageSize);
+        return {
+            items: paged,
+            total: items.length,
+            page,
+            pageSize,
+            hasMore: start + pageSize < items.length,
+        };
     }
     async searchDocuments(productId, keyword) {
-        const toc = await this.getDocumentToc(productId);
+        const tocResult = await this.getDocumentToc(productId);
+        const toc = tocResult.items;
         const lowerKeyword = keyword.toLowerCase();
         const results = [];
         const searchToc = (items) => {

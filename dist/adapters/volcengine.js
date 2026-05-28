@@ -15,7 +15,7 @@ export class VolcengineAdapter extends CloudDocAdapter {
         }
         return res.json();
     }
-    async listProducts() {
+    async listProducts(options) {
         const url = `${BASE_URL}/api/doc/getLibList?Limit=999`;
         const raw = await this.fetchJson(url);
         const products = [];
@@ -27,9 +27,12 @@ export class VolcengineAdapter extends CloudDocAdapter {
                 description: lib.EnName,
             });
         }
-        return products;
+        const filtered = this.filterByKeywords(products, options?.keyword);
+        const page = options?.page ?? 1;
+        const pageSize = options?.pageSize ?? 100;
+        return this.paginate(filtered, page, pageSize);
     }
-    async getDocumentToc(productId) {
+    async getDocumentToc(productId, options) {
         const url = `${BASE_URL}/api/doc/getDocList?LibraryID=${productId}&DataSchema=all_second_nav&type=online`;
         const raw = await this.fetchJson(url);
         const items = [];
@@ -40,15 +43,23 @@ export class VolcengineAdapter extends CloudDocAdapter {
                 if (doc.Type === 1 && doc.ParentID === 0) {
                     // 这是一个顶级目录节点
                     const children = this.buildTocTree(result, doc.DocumentID);
-                    items.push({
+                    const item = {
                         pageId: `${productId}/${doc.DocumentID}`,
                         title: doc.Title,
                         children: children.length > 0 ? children : undefined,
-                    });
+                    };
+                    items.push(item);
                 }
             }
         }
-        return items;
+        let filtered = this.filterByKeywords(items, options?.keyword);
+        // 如果 topOnly 为 true，移除子节点
+        if (options?.topOnly) {
+            filtered = filtered.map(item => ({ ...item, children: undefined }));
+        }
+        const page = options?.page ?? 1;
+        const pageSize = options?.pageSize ?? 200;
+        return this.paginate(filtered, page, pageSize);
     }
     buildTocTree(result, parentId) {
         const children = [];
@@ -66,8 +77,31 @@ export class VolcengineAdapter extends CloudDocAdapter {
         }
         return children;
     }
+    filterByKeywords(items, keyword) {
+        if (!keyword)
+            return items;
+        const keywords = keyword.trim().split(/\s+/).filter(Boolean);
+        if (keywords.length === 0)
+            return items;
+        return items.filter(item => {
+            const text = (item.name || item.title || "").toLowerCase();
+            return keywords.every(kw => text.includes(kw.toLowerCase()));
+        });
+    }
+    paginate(items, page = 1, pageSize = 100) {
+        const start = (page - 1) * pageSize;
+        const paged = items.slice(start, start + pageSize);
+        return {
+            items: paged,
+            total: items.length,
+            page,
+            pageSize,
+            hasMore: start + pageSize < items.length,
+        };
+    }
     async searchDocuments(productId, keyword) {
-        const toc = await this.getDocumentToc(productId);
+        const tocResult = await this.getDocumentToc(productId);
+        const toc = tocResult.items;
         const lowerKeyword = keyword.toLowerCase();
         const results = [];
         const searchToc = (items) => {

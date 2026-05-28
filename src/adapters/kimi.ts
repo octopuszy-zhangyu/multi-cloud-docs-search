@@ -1,4 +1,4 @@
-import { CloudDocAdapter, type Product, type TocItem, type SearchResult, type PageMetadata, type PriceItem, type PriceResult } from "./base.js";
+import { CloudDocAdapter, type Product, type TocItem, type SearchResult, type PageMetadata, type PriceItem, type PriceResult, type PaginatedResult, type ListProductsOptions, type TocOptions } from "./base.js";
 
 const BASE_URL = "https://platform.kimi.com";
 const LLMS_TXT_URL = `${BASE_URL}/docs/llms.txt`;
@@ -30,14 +30,17 @@ export class KimiAdapter extends CloudDocAdapter {
   /**
    * Kimi 只有一个产品：Kimi API 文档
    */
-  async listProducts(): Promise<Product[]> {
-    return [
+  async listProducts(options?: ListProductsOptions): Promise<PaginatedResult<Product>> {
+    const allProducts: Product[] = [
       {
         productId: "kimi-api",
         name: "Kimi API 文档",
         description: "月之暗面 Kimi 开放平台 API 文档",
       },
     ];
+
+    const filtered = this.filterByKeywords(allProducts, options?.keyword);
+    return this.paginate(filtered, options?.page ?? 1, options?.pageSize ?? 100);
   }
 
   /**
@@ -48,7 +51,7 @@ export class KimiAdapter extends CloudDocAdapter {
    *   - 页面标题: /docs/page-path
    *   - 页面标题: /docs/page-path: 描述
    */
-  async getDocumentToc(productId: string): Promise<TocItem[]> {
+  async getDocumentToc(productId: string, options?: TocOptions): Promise<PaginatedResult<TocItem>> {
     const text = await this.fetchText(LLMS_TXT_URL);
     const lines = text.split("\n");
 
@@ -83,7 +86,14 @@ export class KimiAdapter extends CloudDocAdapter {
       }
     }
 
-    return items;
+    const filtered = this.filterByKeywords(items, options?.keyword);
+
+    // 如果 topOnly 为 true，剥离 children
+    const topItems = options?.topOnly
+      ? filtered.map(({ children: _, ...item }) => item)
+      : filtered;
+
+    return this.paginate(topItems, options?.page ?? 1, options?.pageSize ?? 200);
   }
 
   /**
@@ -95,7 +105,7 @@ export class KimiAdapter extends CloudDocAdapter {
 
     const results: SearchResult[] = [];
 
-    for (const item of toc) {
+    for (const item of toc.items) {
       if (item.title.toLowerCase().includes(lowerKeyword)) {
         results.push({
           pageId: item.pageId,
@@ -157,6 +167,34 @@ export class KimiAdapter extends CloudDocAdapter {
       .trim();
 
     return cleaned || "(空内容)";
+  }
+
+  /**
+   * 按关键词过滤条目（AND 逻辑，大小写不敏感）
+   */
+  private filterByKeywords<T extends { name?: string; title?: string }>(items: T[], keyword?: string): T[] {
+    if (!keyword) return items;
+    const keywords = keyword.trim().split(/\s+/).filter(Boolean);
+    if (keywords.length === 0) return items;
+    return items.filter((item) => {
+      const text = (item.name || item.title || "").toLowerCase();
+      return keywords.every((kw) => text.includes(kw.toLowerCase()));
+    });
+  }
+
+  /**
+   * 对数组进行分页包装
+   */
+  private paginate<T>(items: T[], page: number = 1, pageSize: number = 100): PaginatedResult<T> {
+    const start = (page - 1) * pageSize;
+    const paged = items.slice(start, start + pageSize);
+    return {
+      items: paged,
+      total: items.length,
+      page,
+      pageSize,
+      hasMore: start + pageSize < items.length,
+    };
   }
 
   /**

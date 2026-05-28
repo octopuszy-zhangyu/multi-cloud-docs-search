@@ -1,5 +1,5 @@
 import * as cheerio from "cheerio";
-import { CloudDocAdapter, type Product, type TocItem, type SearchResult, type PageMetadata, type PriceItem, type PriceResult } from "./base.js";
+import { CloudDocAdapter, type Product, type TocItem, type SearchResult, type PageMetadata, type PriceItem, type PriceResult, type PaginatedResult, type ListProductsOptions, type TocOptions } from "./base.js";
 import { htmlToMarkdown } from "../utils/html-to-md.js";
 
 const BASE_URL = "https://api-docs.deepseek.com";
@@ -65,17 +65,20 @@ export class DeepseekAdapter extends CloudDocAdapter {
     return urls;
   }
 
-  async listProducts(): Promise<Product[]> {
-    return [
+  async listProducts(options?: ListProductsOptions): Promise<PaginatedResult<Product>> {
+    const allProducts: Product[] = [
       {
         productId: "api-docs",
         name: "DeepSeek API 文档",
         description: "DeepSeek API 官方文档",
       },
     ];
+
+    const filtered = this.filterByKeywords(allProducts, options?.keyword);
+    return this.paginate(filtered, options?.page, options?.pageSize);
   }
 
-  async getDocumentToc(productId: string): Promise<TocItem[]> {
+  async getDocumentToc(productId: string, options?: TocOptions): Promise<PaginatedResult<TocItem>> {
     const urls = await this.fetchSitemapUrls();
 
     // 按路径深度构建树形结构
@@ -109,11 +112,45 @@ export class DeepseekAdapter extends CloudDocAdapter {
       items.push(tocItem);
     }
 
-    return items;
+    // Apply keyword filter
+    let filtered = items;
+    if (options?.keyword) {
+      filtered = this.filterByKeywords(items, options.keyword);
+    }
+
+    // Strip children if topOnly
+    if (options?.topOnly) {
+      filtered = filtered.map(item => ({ pageId: item.pageId, title: item.title }));
+    }
+
+    return this.paginate(filtered, options?.page, options?.pageSize ?? 200);
+  }
+
+  private filterByKeywords<T extends { name?: string; title?: string }>(items: T[], keyword?: string): T[] {
+    if (!keyword) return items;
+    const keywords = keyword.trim().split(/\s+/).filter(Boolean);
+    if (keywords.length === 0) return items;
+    return items.filter(item => {
+      const text = (item.name || item.title || "").toLowerCase();
+      return keywords.every(kw => text.includes(kw.toLowerCase()));
+    });
+  }
+
+  private paginate<T>(items: T[], page: number = 1, pageSize: number = 100): PaginatedResult<T> {
+    const start = (page - 1) * pageSize;
+    const paged = items.slice(start, start + pageSize);
+    return {
+      items: paged,
+      total: items.length,
+      page,
+      pageSize,
+      hasMore: start + pageSize < items.length,
+    };
   }
 
   async searchDocuments(productId: string, keyword: string): Promise<SearchResult[]> {
-    const toc = await this.getDocumentToc(productId);
+    const tocResult = await this.getDocumentToc(productId);
+    const toc = tocResult.items;
     const lowerKeyword = keyword.toLowerCase();
 
     const results: SearchResult[] = [];

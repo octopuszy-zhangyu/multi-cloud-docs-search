@@ -11,16 +11,19 @@
   "scripts": {
     "start": "node dist/stdio.js",
     "dev": "npx tsx watch src/stdio.ts",
-    "build": "npx tsc"
+    "build": "npx tsc",
+    "test": "vitest run",
+    "test:watch": "vitest"
   },
   "dependencies": {
     "@modelcontextprotocol/sdk": "^1.18.0",
-    "zod": "^4.0.0",
-    "cheerio": "^1.0.0"
+    "cheerio": "^1.0.0",
+    "zod": "^4.0.0"
   },
   "devDependencies": {
     "@cloudflare/workers-types": "^4.20250301.0",
-    "typescript": "^5.7.0"
+    "typescript": "^5.7.0",
+    "vitest": "^4.1.7"
   },
   "engines": {
     "node": ">=18"

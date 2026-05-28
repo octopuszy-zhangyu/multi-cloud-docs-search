@@ -48,7 +48,7 @@ export class EcloudAdapter extends CloudDocAdapter {
             return null;
         }
     }
-    async listProducts() {
+    async listProducts(options) {
         // 优先使用API获取产品列表
         const data = await this.fetchJson(CATEGORY_TREE_API);
         if (data?.data?.children) {
@@ -70,7 +70,8 @@ export class EcloudAdapter extends CloudDocAdapter {
                 }
             };
             extractProducts(data.data.children, "");
-            return products;
+            const filtered = this.filterByKeywords(products, options?.keyword);
+            return this.paginate(filtered, options?.page, options?.pageSize);
         }
         // 备用方案：从HTML页面提取
         const html = await this.fetchHtml(HELP_CENTER_URL);
@@ -90,7 +91,8 @@ export class EcloudAdapter extends CloudDocAdapter {
                 });
             }
         });
-        return products;
+        const filtered = this.filterByKeywords(products, options?.keyword);
+        return this.paginate(filtered, options?.page, options?.pageSize);
     }
     async getOutlineId(productId) {
         const data = await this.fetchJson(CATEGORY_TREE_API);
@@ -111,7 +113,7 @@ export class EcloudAdapter extends CloudDocAdapter {
         findOutlineId(data.data.children);
         return outlineId;
     }
-    async getDocumentToc(productId) {
+    async getDocumentToc(productId, options) {
         const outlineId = await this.getOutlineId(productId);
         if (!outlineId) {
             // 备用方案：从HTML页面提取
@@ -132,14 +134,18 @@ export class EcloudAdapter extends CloudDocAdapter {
                     });
                 }
             });
-            return items;
+            let filtered = this.filterByKeywords(items, options?.keyword);
+            if (options?.topOnly) {
+                filtered = filtered.map(item => ({ pageId: item.pageId, title: item.title }));
+            }
+            return this.paginate(filtered, options?.page, options?.pageSize, 200);
         }
         const url = `${OUTLINE_TREE_API}?outlineId=${outlineId}`;
         const data = await this.fetchJson(url);
         const items = [];
         const seen = new Set();
         if (!data?.data?.children)
-            return items;
+            return this.paginate([], options?.page, options?.pageSize, 200);
         const extractArticles = (nodes) => {
             for (const node of nodes) {
                 if (node.articleId && !seen.has(String(node.articleId))) {
@@ -157,11 +163,39 @@ export class EcloudAdapter extends CloudDocAdapter {
         if (data.data?.children) {
             extractArticles(data.data.children);
         }
-        return items;
+        let filtered = this.filterByKeywords(items, options?.keyword);
+        if (options?.topOnly) {
+            filtered = filtered.map(item => ({ pageId: item.pageId, title: item.title }));
+        }
+        return this.paginate(filtered, options?.page, options?.pageSize, 200);
+    }
+    filterByKeywords(items, keyword) {
+        if (!keyword)
+            return items;
+        const keywords = keyword.trim().split(/\s+/).filter(Boolean);
+        if (keywords.length === 0)
+            return items;
+        return items.filter(item => {
+            const text = (item.name || item.title || "").toLowerCase();
+            return keywords.every(kw => text.includes(kw.toLowerCase()));
+        });
+    }
+    paginate(items, page = 1, pageSize = 100, defaultPageSize) {
+        const effectivePageSize = pageSize || defaultPageSize || 100;
+        const start = (page - 1) * effectivePageSize;
+        const paged = items.slice(start, start + effectivePageSize);
+        return {
+            items: paged,
+            total: items.length,
+            page,
+            pageSize: effectivePageSize,
+            hasMore: start + effectivePageSize < items.length,
+        };
     }
     async searchDocuments(productId, keyword) {
         // 移动云没有公开的搜索API，通过遍历文档目录做本地关键词匹配
-        const toc = await this.getDocumentToc(productId);
+        const tocResult = await this.getDocumentToc(productId);
+        const toc = tocResult.items;
         const lowerKeyword = keyword.toLowerCase();
         return toc
             .filter((item) => item.title.toLowerCase().includes(lowerKeyword))
@@ -331,7 +365,8 @@ export class EcloudAdapter extends CloudDocAdapter {
         }
         try {
             // 获取产品的文档目录，查找价格相关页面
-            const toc = await this.getDocumentToc(productId);
+            const tocResult = await this.getDocumentToc(productId);
+            const toc = tocResult.items;
             // 查找包含"价格"、"计费"、"定价"或"云主机"的页面
             const pricePages = toc.filter(item => item.title.includes("价格") ||
                 item.title.includes("计费") ||

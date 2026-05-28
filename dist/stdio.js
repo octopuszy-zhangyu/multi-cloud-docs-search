@@ -2,6 +2,35 @@ import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
 import { z } from "zod";
 import { getAdapter } from "./adapters/index.js";
+/** 关键词过滤函数（AND 逻辑，多个空格分隔的关键词必须全部匹配） */
+function filterByKeywords(items, keywords) {
+    if (keywords.length === 0)
+        return items;
+    return items.filter((item) => {
+        const text = (item.name || item.title || "").toLowerCase();
+        return keywords.every((kw) => text.includes(kw.toLowerCase()));
+    });
+}
+/** 统一格式化分页结果 */
+function formatPaginatedResult(result, defaultPageSize = 100) {
+    if ("items" in result) {
+        return {
+            text: JSON.stringify(result.items, null, 2),
+            total: result.total,
+            page: result.page,
+            pageSize: result.pageSize,
+            hasMore: result.hasMore,
+        };
+    }
+    const items = result;
+    return {
+        text: JSON.stringify(items, null, 2),
+        total: items.length,
+        page: 1,
+        pageSize: defaultPageSize,
+        hasMore: false,
+    };
+}
 const server = new McpServer({
     name: "multi-cloud-docs-search",
     version: "1.0.0",
@@ -176,37 +205,169 @@ const server = new McpServer({
 - kimi - 月之暗面 Kimi`,
 });
 server.registerTool("list_products", {
-    description: "获取指定云厂商的所有产品文档列表，返回产品名称和对应的 productId",
+    description: "获取指定云厂商的产品文档列表，返回产品名称和对应的 productId。支持关键词过滤（多个空格分隔的关键词用 AND 逻辑）和分页",
     inputSchema: z.object({
         provider: z.string().describe("云厂商标识，如 'ctyun'"),
+        keyword: z.string().optional().describe("精简关键词过滤（支持多个空格分隔，如 'ecs cvm'），多个关键词用 AND 逻辑（必须全部匹配）"),
+        page: z.number().optional().describe("页码，默认 1"),
+        pageSize: z.number().optional().describe("每页条数，默认 100，最大 500"),
     }).strict(),
-}, async ({ provider }) => {
+}, async ({ provider, keyword, page, pageSize }) => {
     const adapter = getAdapter(provider);
-    const products = await adapter.listProducts();
-    return { content: [{ type: "text", text: JSON.stringify(products) }] };
+    const keywords = keyword ? keyword.trim().split(/\s+/).filter(Boolean) : [];
+    const result = await adapter.listProducts({ keyword, page, pageSize });
+    let items;
+    let total;
+    let currentPage;
+    let currentPageSize;
+    let hasMore;
+    if ("items" in result) {
+        items = result.items;
+        total = result.total;
+        currentPage = result.page;
+        currentPageSize = result.pageSize;
+        hasMore = result.hasMore;
+    }
+    else {
+        items = result;
+        total = items.length;
+        currentPage = 1;
+        currentPageSize = pageSize || 100;
+        hasMore = false;
+    }
+    if (keywords.length > 0) {
+        const filtered = filterByKeywords(items, keywords);
+        return {
+            content: [{
+                    type: "text",
+                    text: JSON.stringify({
+                        items: filtered,
+                        total: total,
+                        page: currentPage,
+                        pageSize: currentPageSize,
+                        hasMore: hasMore,
+                        message: filtered.length === 0
+                            ? `未找到匹配 "${keyword}" 的产品，请尝试更宽泛的关键词`
+                            : `共 ${total} 个产品，已过滤出 ${filtered.length} 个匹配 "${keyword}" 的产品`,
+                    }, null, 2),
+                }],
+        };
+    }
+    return {
+        content: [{
+                type: "text",
+                text: JSON.stringify({
+                    items,
+                    total,
+                    page: currentPage,
+                    pageSize: currentPageSize,
+                    hasMore,
+                }, null, 2),
+            }],
+    };
 });
 server.registerTool("get_document_toc", {
-    description: "获取指定产品的文档目录树。参数 productId 来自 list_products 返回的 productId",
+    description: "获取指定产品的文档目录树。参数 productId 来自 list_products 返回的 productId。支持关键词过滤、分页和顶层目录模式",
     inputSchema: z.object({
         provider: z.string().describe("云厂商标识"),
         productId: z.string().describe("产品文档 ID"),
+        keyword: z.string().optional().describe("精简关键词过滤（支持多个空格分隔，如 '价格 计费'），多个关键词用 AND 逻辑"),
+        page: z.number().optional().describe("页码，默认 1"),
+        pageSize: z.number().optional().describe("每页条数，默认 200，最大 500"),
+        topOnly: z.boolean().optional().describe("是否只返回顶层目录，默认 false"),
     }).strict(),
-}, async ({ provider, productId }) => {
+}, async ({ provider, productId, keyword, page, pageSize, topOnly }) => {
     const adapter = getAdapter(provider);
-    const items = await adapter.getDocumentToc(productId);
-    return { content: [{ type: "text", text: JSON.stringify(items, null, 2) }] };
+    const keywords = keyword ? keyword.trim().split(/\s+/).filter(Boolean) : [];
+    const result = await adapter.getDocumentToc(productId, { keyword, page, pageSize, topOnly });
+    let items;
+    let total;
+    let currentPage;
+    let currentPageSize;
+    let hasMore;
+    if ("items" in result) {
+        items = result.items;
+        total = result.total;
+        currentPage = result.page;
+        currentPageSize = result.pageSize;
+        hasMore = result.hasMore;
+    }
+    else {
+        items = result;
+        total = items.length;
+        currentPage = 1;
+        currentPageSize = pageSize || 200;
+        hasMore = false;
+    }
+    if (topOnly) {
+        items = items.map(item => ({ pageId: item.pageId, title: item.title }));
+    }
+    if (keywords.length > 0) {
+        const filtered = filterByKeywords(items, keywords);
+        return {
+            content: [{
+                    type: "text",
+                    text: JSON.stringify({
+                        items: filtered,
+                        total: total,
+                        page: currentPage,
+                        pageSize: currentPageSize,
+                        hasMore: hasMore,
+                        message: filtered.length === 0
+                            ? `未找到匹配 "${keyword}" 的页面，请尝试更宽泛的关键词`
+                            : `共 ${total} 个页面，已过滤出 ${filtered.length} 个匹配 "${keyword}" 的页面`,
+                    }, null, 2),
+                }],
+        };
+    }
+    return {
+        content: [{
+                type: "text",
+                text: JSON.stringify({
+                    items,
+                    total,
+                    page: currentPage,
+                    pageSize: currentPageSize,
+                    hasMore,
+                }, null, 2),
+            }],
+    };
 });
 server.registerTool("search_documents", {
-    description: "在指定云厂商的产品文档中按关键词搜索，返回匹配的页面列表",
+    description: "在指定云厂商的产品文档中按关键词搜索，返回匹配的页面列表。关键词支持多个空格分隔（AND 逻辑），建议使用精简关键词",
     inputSchema: z.object({
         provider: z.string().describe("云厂商标识"),
         productId: z.string().describe("产品文档 ID"),
-        keyword: z.string().describe("搜索关键词"),
+        keyword: z.string().describe("搜索关键词（支持多个空格分隔，如 '价格 计费'），多个关键词用 AND 逻辑"),
+        query: z.string().optional().describe("搜索关键词（keyword 的别名，两者传一个即可）"),
     }).strict(),
-}, async ({ provider, productId, keyword }) => {
+}, async ({ provider, productId, keyword, query }) => {
     const adapter = getAdapter(provider);
-    const results = await adapter.searchDocuments(productId, keyword);
-    return { content: [{ type: "text", text: JSON.stringify(results, null, 2) }] };
+    const searchKeyword = keyword || query || "";
+    if (!searchKeyword) {
+        return { content: [{ type: "text", text: "请提供搜索关键词（keyword 或 query 参数）" }] };
+    }
+    const keywords = searchKeyword.trim().split(/\s+/).filter(Boolean);
+    const results = await adapter.searchDocuments(productId, searchKeyword);
+    let filteredResults = results;
+    if (keywords.length > 1) {
+        filteredResults = results.filter(item => {
+            const text = (item.title + " " + (item.description || "")).toLowerCase();
+            return keywords.every(kw => text.includes(kw.toLowerCase()));
+        });
+    }
+    return {
+        content: [{
+                type: "text",
+                text: JSON.stringify({
+                    items: filteredResults,
+                    total: filteredResults.length,
+                    message: filteredResults.length === 0
+                        ? `未找到同时匹配 "${searchKeyword}" 的页面`
+                        : `找到 ${filteredResults.length} 个匹配的页面`,
+                }, null, 2),
+            }],
+    };
 });
 server.registerTool("get_page_metadata", {
     description: "获取文档页面的元信息，包括标题和 contentPath。参数 pageId 来自 get_document_toc 或 search_documents",

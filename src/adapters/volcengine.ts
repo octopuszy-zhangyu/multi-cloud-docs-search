@@ -1,4 +1,4 @@
-import { CloudDocAdapter, type Product, type TocItem, type SearchResult, type PageMetadata, type PriceItem, type PriceResult } from "./base.js";
+import { CloudDocAdapter, type Product, type TocItem, type SearchResult, type PageMetadata, type PriceItem, type PriceResult, type PaginatedResult, type ListProductsOptions, type TocOptions } from "./base.js";
 
 const BASE_URL = "https://www.volcengine.com";
 
@@ -84,7 +84,7 @@ export class VolcengineAdapter extends CloudDocAdapter {
     return res.json() as Promise<T>;
   }
 
-  async listProducts(): Promise<Product[]> {
+  async listProducts(options?: ListProductsOptions): Promise<PaginatedResult<Product>> {
     const url = `${BASE_URL}/api/doc/getLibList?Limit=999`;
     const raw = await this.fetchJson<GetLibListResponse>(url);
 
@@ -99,10 +99,13 @@ export class VolcengineAdapter extends CloudDocAdapter {
       });
     }
 
-    return products;
+    const filtered = this.filterByKeywords(products, options?.keyword);
+    const page = options?.page ?? 1;
+    const pageSize = options?.pageSize ?? 100;
+    return this.paginate(filtered, page, pageSize);
   }
 
-  async getDocumentToc(productId: string): Promise<TocItem[]> {
+  async getDocumentToc(productId: string, options?: TocOptions): Promise<PaginatedResult<TocItem>> {
     const url = `${BASE_URL}/api/doc/getDocList?LibraryID=${productId}&DataSchema=all_second_nav&type=online`;
     const raw = await this.fetchJson<GetDocListResponse>(url);
 
@@ -115,16 +118,26 @@ export class VolcengineAdapter extends CloudDocAdapter {
         if (doc.Type === 1 && doc.ParentID === 0) {
           // 这是一个顶级目录节点
           const children = this.buildTocTree(result, doc.DocumentID);
-          items.push({
+          const item: TocItem = {
             pageId: `${productId}/${doc.DocumentID}`,
             title: doc.Title,
             children: children.length > 0 ? children : undefined,
-          });
+          };
+          items.push(item);
         }
       }
     }
 
-    return items;
+    let filtered = this.filterByKeywords(items, options?.keyword);
+
+    // 如果 topOnly 为 true，移除子节点
+    if (options?.topOnly) {
+      filtered = filtered.map(item => ({ ...item, children: undefined }));
+    }
+
+    const page = options?.page ?? 1;
+    const pageSize = options?.pageSize ?? 200;
+    return this.paginate(filtered, page, pageSize);
   }
 
   private buildTocTree(result: Record<string, VolcDocItem[]>, parentId: number): TocItem[] {
@@ -146,8 +159,31 @@ export class VolcengineAdapter extends CloudDocAdapter {
     return children;
   }
 
+  private filterByKeywords<T extends { name?: string; title?: string }>(items: T[], keyword?: string): T[] {
+    if (!keyword) return items;
+    const keywords = keyword.trim().split(/\s+/).filter(Boolean);
+    if (keywords.length === 0) return items;
+    return items.filter(item => {
+      const text = (item.name || item.title || "").toLowerCase();
+      return keywords.every(kw => text.includes(kw.toLowerCase()));
+    });
+  }
+
+  private paginate<T>(items: T[], page: number = 1, pageSize: number = 100): PaginatedResult<T> {
+    const start = (page - 1) * pageSize;
+    const paged = items.slice(start, start + pageSize);
+    return {
+      items: paged,
+      total: items.length,
+      page,
+      pageSize,
+      hasMore: start + pageSize < items.length,
+    };
+  }
+
   async searchDocuments(productId: string, keyword: string): Promise<SearchResult[]> {
-    const toc = await this.getDocumentToc(productId);
+    const tocResult = await this.getDocumentToc(productId);
+    const toc = tocResult.items;
     const lowerKeyword = keyword.toLowerCase();
 
     const results: SearchResult[] = [];

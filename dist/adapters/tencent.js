@@ -18,7 +18,7 @@ export class TencentAdapter extends CloudDocAdapter {
         }
         return res.text();
     }
-    async listProducts() {
+    async listProducts(options) {
         const url = `${BASE_URL}/document/product`;
         const html = await this.fetchHtml(url);
         const $ = cheerio.load(html);
@@ -59,9 +59,14 @@ export class TencentAdapter extends CloudDocAdapter {
                 }
             }
         });
-        return products;
+        // 过滤关键词
+        const filtered = this.filterByKeywords(products, options?.keyword);
+        // 分页
+        const page = options?.page ?? 1;
+        const pageSize = options?.pageSize ?? 100;
+        return this.paginate(filtered, page, pageSize);
     }
-    async getDocumentToc(productId) {
+    async getDocumentToc(productId, options) {
         const url = `${BASE_URL}/document/product/${productId}`;
         const html = await this.fetchHtml(url);
         const $ = cheerio.load(html);
@@ -109,7 +114,19 @@ export class TencentAdapter extends CloudDocAdapter {
                             }
                             return result;
                         };
-                        return buildToc(catalogue.list);
+                        const tocItems = buildToc(catalogue.list);
+                        // 过滤关键词
+                        const filtered = this.filterByKeywords(tocItems, options?.keyword);
+                        // 如果 topOnly，移除 children
+                        if (options?.topOnly) {
+                            for (const item of filtered) {
+                                delete item.children;
+                            }
+                        }
+                        // 分页
+                        const page = options?.page ?? 1;
+                        const pageSize = options?.pageSize ?? 200;
+                        return this.paginate(filtered, page, pageSize);
                     }
                 }
             }
@@ -133,11 +150,23 @@ export class TencentAdapter extends CloudDocAdapter {
                 }
             }
         });
-        return items;
+        // 过滤关键词
+        const filtered = this.filterByKeywords(items, options?.keyword);
+        // 如果 topOnly，移除 children
+        if (options?.topOnly) {
+            for (const item of filtered) {
+                delete item.children;
+            }
+        }
+        // 分页
+        const page = options?.page ?? 1;
+        const pageSize = options?.pageSize ?? 200;
+        return this.paginate(filtered, page, pageSize);
     }
     async searchDocuments(productId, keyword) {
         // 腾讯云没有公开的搜索 API，通过遍历文档目录做本地关键词匹配
-        const toc = await this.getDocumentToc(productId);
+        const tocResult = await this.getDocumentToc(productId);
+        const toc = tocResult.items;
         const lowerKeyword = keyword.toLowerCase();
         const results = [];
         const seen = new Set();
@@ -484,5 +513,33 @@ export class TencentAdapter extends CloudDocAdapter {
             }
         }
         return prices;
+    }
+    /**
+     * 按关键词过滤列表（AND 逻辑，关键词以空格分隔）
+     */
+    filterByKeywords(items, keyword) {
+        if (!keyword)
+            return items;
+        const keywords = keyword.trim().split(/\s+/).filter(Boolean);
+        if (keywords.length === 0)
+            return items;
+        return items.filter(item => {
+            const text = (item.name || item.title || "").toLowerCase();
+            return keywords.every(kw => text.includes(kw.toLowerCase()));
+        });
+    }
+    /**
+     * 分页包装
+     */
+    paginate(items, page = 1, pageSize = 100) {
+        const start = (page - 1) * pageSize;
+        const paged = items.slice(start, start + pageSize);
+        return {
+            items: paged,
+            total: items.length,
+            page,
+            pageSize,
+            hasMore: start + pageSize < items.length,
+        };
     }
 }

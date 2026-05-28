@@ -18,7 +18,7 @@ export class BaiduAdapter extends CloudDocAdapter {
         }
         return res.text();
     }
-    async listProducts() {
+    async listProducts(options) {
         const url = `${BASE_URL}/doc/index.html`;
         const html = await this.fetchHtml(url);
         const $ = cheerio.load(html);
@@ -38,9 +38,14 @@ export class BaiduAdapter extends CloudDocAdapter {
                 });
             }
         });
-        return products;
+        // 过滤关键词
+        const filtered = this.filterByKeywords(products, options?.keyword);
+        // 分页
+        const page = options?.page ?? 1;
+        const pageSize = options?.pageSize ?? 100;
+        return this.paginate(filtered, page, pageSize);
     }
-    async getDocumentToc(productId) {
+    async getDocumentToc(productId, options) {
         const url = `${BASE_URL}/doc/${productId}/index.html`;
         const html = await this.fetchHtml(url);
         const $ = cheerio.load(html);
@@ -62,11 +67,21 @@ export class BaiduAdapter extends CloudDocAdapter {
                 });
             }
         });
-        return items;
+        // 过滤关键词
+        let filtered = this.filterByKeywords(items, options?.keyword);
+        // 如果 topOnly 为 true，移除 children
+        if (options?.topOnly) {
+            filtered = filtered.map(item => ({ ...item, children: undefined }));
+        }
+        // 分页
+        const page = options?.page ?? 1;
+        const pageSize = options?.pageSize ?? 200;
+        return this.paginate(filtered, page, pageSize);
     }
     async searchDocuments(productId, keyword) {
         // 百度云没有公开搜索 API，通过遍历文档目录做本地关键词匹配
-        const toc = await this.getDocumentToc(productId);
+        const tocResult = await this.getDocumentToc(productId);
+        const toc = tocResult.items;
         const lowerKeyword = keyword.toLowerCase();
         return toc
             .filter((item) => item.title.toLowerCase().includes(lowerKeyword))
@@ -141,6 +156,28 @@ export class BaiduAdapter extends CloudDocAdapter {
             }
         }
         return prices;
+    }
+    filterByKeywords(items, keyword) {
+        if (!keyword)
+            return items;
+        const keywords = keyword.trim().split(/\s+/).filter(Boolean);
+        if (keywords.length === 0)
+            return items;
+        return items.filter(item => {
+            const text = (item.name || item.title || "").toLowerCase();
+            return keywords.every(kw => text.includes(kw.toLowerCase()));
+        });
+    }
+    paginate(items, page = 1, pageSize = 100) {
+        const start = (page - 1) * pageSize;
+        const paged = items.slice(start, start + pageSize);
+        return {
+            items: paged,
+            total: items.length,
+            page,
+            pageSize,
+            hasMore: start + pageSize < items.length,
+        };
     }
     async getProductPrice(productId) {
         const prices = [];

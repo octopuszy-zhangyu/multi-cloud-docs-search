@@ -32,8 +32,11 @@ export class HuaweiAdapter extends CloudDocAdapter {
         "Accept-Language": "zh-CN,zh;q=0.9,en;q=0.8",
       },
     });
+    if (res.status === 404) {
+      throw new Error(`页面不存在 (404): ${url}。该文档页面可能已被移除或 URL 映射错误`);
+    }
     if (!res.ok) {
-      throw new Error(`Fetch failed: ${res.status} ${res.statusText}`);
+      throw new Error(`Fetch failed: ${res.status} ${res.statusText} — ${url}`);
     }
     return res.text();
   }

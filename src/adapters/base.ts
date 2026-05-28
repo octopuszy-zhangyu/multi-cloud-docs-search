@@ -52,6 +52,29 @@ export interface PriceResult {
   updateDate?: string;
 }
 
+/** 分页结果包装 */
+export interface PaginatedResult<T> {
+  items: T[];
+  total: number;
+  page: number;
+  pageSize: number;
+  hasMore: boolean;
+}
+
+/** 查询参数 */
+export interface ListProductsOptions {
+  keyword?: string;
+  page?: number;
+  pageSize?: number;
+}
+
+export interface TocOptions {
+  keyword?: string;
+  page?: number;
+  pageSize?: number;
+  topOnly?: boolean;
+}
+
 /** 云厂商文档适配器抽象基类 */
 export abstract class CloudDocAdapter {
   /** 厂商标识，如 "ctyun"、"aliyun" */
@@ -60,10 +83,10 @@ export abstract class CloudDocAdapter {
   abstract readonly name: string;
 
   /** 获取所有产品文档列表 */
-  abstract listProducts(): Promise<Product[]>;
+  abstract listProducts(options?: ListProductsOptions): Promise<Product[] | PaginatedResult<Product>>;
 
   /** 获取指定产品的文档目录树 */
-  abstract getDocumentToc(productId: string): Promise<TocItem[]>;
+  abstract getDocumentToc(productId: string, options?: TocOptions): Promise<TocItem[] | PaginatedResult<TocItem>>;
 
   /** 在产品文档中搜索关键词 */
   abstract searchDocuments(productId: string, keyword: string): Promise<SearchResult[]>;

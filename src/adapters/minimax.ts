@@ -1,4 +1,4 @@
-import { CloudDocAdapter, type Product, type TocItem, type SearchResult, type PageMetadata, type PriceItem, type PriceResult } from "./base.js";
+import { CloudDocAdapter, type Product, type TocItem, type SearchResult, type PageMetadata, type PriceItem, type PriceResult, type PaginatedResult, type ListProductsOptions, type TocOptions } from "./base.js";
 
 const BASE_URL = "https://platform.minimaxi.com";
 const LLMS_URL = `${BASE_URL}/docs/llms.txt`;
@@ -21,18 +21,43 @@ export class MinimaxAdapter extends CloudDocAdapter {
     return res.text();
   }
 
-  async listProducts(): Promise<Product[]> {
+  private filterByKeywords<T extends { name?: string; title?: string }>(items: T[], keyword?: string): T[] {
+    if (!keyword) return items;
+    const keywords = keyword.trim().split(/\s+/).filter(Boolean);
+    if (keywords.length === 0) return items;
+    return items.filter((item) => {
+      const text = (item.name || item.title || "").toLowerCase();
+      return keywords.every((kw) => text.includes(kw.toLowerCase()));
+    });
+  }
+
+  private paginate<T>(items: T[], page: number = 1, pageSize: number = 100): PaginatedResult<T> {
+    const start = (page - 1) * pageSize;
+    const paged = items.slice(start, start + pageSize);
+    return {
+      items: paged,
+      total: items.length,
+      page,
+      pageSize,
+      hasMore: start + pageSize < items.length,
+    };
+  }
+
+  async listProducts(options?: ListProductsOptions): Promise<PaginatedResult<Product>> {
     // MiniMax 只有一个产品
-    return [
+    const allProducts: Product[] = [
       {
         productId: "minimax-api",
         name: "MiniMax API 文档",
         description: "MiniMax 开放平台 API 文档",
       },
     ];
+
+    const filtered = this.filterByKeywords(allProducts, options?.keyword);
+    return this.paginate(filtered, options?.page, options?.pageSize);
   }
 
-  async getDocumentToc(productId: string): Promise<TocItem[]> {
+  async getDocumentToc(productId: string, options?: TocOptions): Promise<PaginatedResult<TocItem>> {
     const text = await this.fetchText(LLMS_URL);
     const lines = text.split("\n");
 
@@ -96,16 +121,26 @@ export class MinimaxAdapter extends CloudDocAdapter {
     }
 
     // 清理空分组
-    return items.filter((item) => {
+    let result = items.filter((item) => {
       if (item.pageId === "" && item.children && item.children.length === 0) {
         return false;
       }
       return true;
     });
+
+    // Apply topOnly: strip children from items
+    if (options?.topOnly) {
+      result = result.map((item) => ({ ...item, children: undefined }));
+    }
+
+    // Apply keyword filtering
+    const filtered = this.filterByKeywords(result, options?.keyword);
+    return this.paginate(filtered, options?.page, options?.pageSize ?? 200);
   }
 
   async searchDocuments(productId: string, keyword: string): Promise<SearchResult[]> {
-    const toc = await this.getDocumentToc(productId);
+    const tocResult = await this.getDocumentToc(productId);
+    const toc = tocResult.items;
     const lowerKeyword = keyword.toLowerCase();
 
     const results: SearchResult[] = [];

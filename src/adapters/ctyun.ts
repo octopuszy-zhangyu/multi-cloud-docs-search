@@ -4,7 +4,7 @@ import type {
   ContentQueryResponse,
   PageMetadataResponse,
 } from "../types.js";
-import { CloudDocAdapter, type Product, type TocItem, type SearchResult, type PageMetadata, type PriceItem, type PriceResult } from "./base.js";
+import { CloudDocAdapter, type Product, type TocItem, type SearchResult, type PageMetadata, type PriceItem, type PriceResult, type PaginatedResult, type ListProductsOptions, type TocOptions } from "./base.js";
 
 const BASE_URL = "https://www.ctyun.cn";
 
@@ -25,10 +25,10 @@ export class CtyunAdapter extends CloudDocAdapter {
     return res.json() as Promise<T>;
   }
 
-  async listProducts(): Promise<Product[]> {
+  async listProducts(options?: ListProductsOptions): Promise<PaginatedResult<Product>> {
     const url = `${BASE_URL}/v2/portal/book/ListForHelp?bookClassDomain=product&_t=${Date.now()}`;
     const raw = await this.request<ListForHelpResponse>(url);
-    const result: Product[] = [];
+    let result: Product[] = [];
     for (const cat of raw.data?.list ?? []) {
       for (const p of cat.list) {
         result.push({
@@ -38,10 +38,13 @@ export class CtyunAdapter extends CloudDocAdapter {
         });
       }
     }
-    return result;
+    result = this.filterByKeywords(result, options?.keyword);
+    const page = options?.page ?? 1;
+    const pageSize = options?.pageSize ?? 100;
+    return this.paginate(result, page, pageSize);
   }
 
-  async getDocumentToc(productId: string): Promise<TocItem[]> {
+  async getDocumentToc(productId: string, options?: TocOptions): Promise<PaginatedResult<TocItem>> {
     const res = await fetch(`${BASE_URL}/document/${productId}/`, {
       headers: {
         "User-Agent":
@@ -50,7 +53,7 @@ export class CtyunAdapter extends CloudDocAdapter {
     });
     const html = await res.text();
     const $ = cheerio.load(html);
-    const items: TocItem[] = [];
+    let items: TocItem[] = [];
     const linkPattern = new RegExp(`^/document/${productId}/(\\d+)$`);
 
     $("a[href]").each((_, el) => {
@@ -65,7 +68,15 @@ export class CtyunAdapter extends CloudDocAdapter {
       }
     });
 
-    return items;
+    items = this.filterByKeywords(items, options?.keyword);
+
+    if (options?.topOnly) {
+      items = items.map(({ children, ...rest }) => rest);
+    }
+
+    const page = options?.page ?? 1;
+    const pageSize = options?.pageSize ?? 200;
+    return this.paginate(items, page, pageSize);
   }
 
   async searchDocuments(productId: string, keyword: string): Promise<SearchResult[]> {
@@ -103,7 +114,25 @@ export class CtyunAdapter extends CloudDocAdapter {
     if (!res.ok) {
       throw new Error(`Content fetch failed: ${res.status} ${res.statusText}`);
     }
-    return res.text();
+    // 天翼云页面可能使用 GBK 编码，需要检测并正确解码
+    const contentType = res.headers.get("content-type") || "";
+    const buffer = await res.arrayBuffer();
+    const bytes = new Uint8Array(buffer);
+
+    // 检测 HTML 中声明的编码
+    const decoder = new TextDecoder("utf-8");
+    const htmlStart = decoder.decode(bytes.slice(0, 1024));
+    const charsetMatch = htmlStart.match(/charset\s*=\s*["']?([^"'\s>]+)/i);
+    const encoding = charsetMatch ? charsetMatch[1].toLowerCase() : contentType.includes("charset=")
+      ? contentType.split("charset=")[1].split(";")[0].trim().toLowerCase()
+      : "utf-8";
+
+    try {
+      return new TextDecoder(encoding === "gbk" || encoding === "gb2312" || encoding === "gb18030" ? "gbk" : encoding).decode(bytes);
+    } catch {
+      // 如果指定编码不支持，回退到 utf-8
+      return decoder.decode(bytes);
+    }
   }
 
   /** 清理字符串中的 HTML 标签和特殊字符 */
@@ -115,6 +144,30 @@ export class CtyunAdapter extends CloudDocAdapter {
     result = result.replace(/\\/g, "");
     result = result.replace(/\s+/g, " ").trim();
     return result;
+  }
+
+  /** 按关键词过滤项目（AND 逻辑） */
+  private filterByKeywords<T extends { name?: string; title?: string }>(items: T[], keyword?: string): T[] {
+    if (!keyword) return items;
+    const keywords = keyword.trim().split(/\s+/).filter(Boolean);
+    if (keywords.length === 0) return items;
+    return items.filter((item) => {
+      const text = (item.name || item.title || "").toLowerCase();
+      return keywords.every((kw) => text.includes(kw.toLowerCase()));
+    });
+  }
+
+  /** 分页处理 */
+  private paginate<T>(items: T[], page: number = 1, pageSize: number = 100): PaginatedResult<T> {
+    const start = (page - 1) * pageSize;
+    const paged = items.slice(start, start + pageSize);
+    return {
+      items: paged,
+      total: items.length,
+      page,
+      pageSize,
+      hasMore: start + pageSize < items.length,
+    };
   }
 
   /**

@@ -60,25 +60,52 @@ export class CucloudAdapter extends CloudDocAdapter {
         }));
         return this.productListCache;
     }
-    async listProducts() {
+    paginate(items, page = 1, pageSize = 100) {
+        const start = (page - 1) * pageSize;
+        const paged = items.slice(start, start + pageSize);
+        return {
+            items: paged,
+            total: items.length,
+            page,
+            pageSize,
+            hasMore: start + pageSize < items.length,
+        };
+    }
+    async listProducts(options) {
         const products = await this.getProductsFromSearch();
-        return products.map((p) => ({
+        let mapped = products.map((p) => ({
             productId: p.productId,
             name: p.name,
             description: "",
         }));
+        // Keyword filtering
+        if (options?.keyword) {
+            const keywords = options.keyword.trim().split(/\s+/).filter(Boolean);
+            if (keywords.length > 0) {
+                mapped = mapped.filter(item => {
+                    const text = (item.name || "").toLowerCase();
+                    return keywords.every(kw => text.includes(kw.toLowerCase()));
+                });
+            }
+        }
+        // Pagination
+        const page = options?.page ?? 1;
+        const pageSize = options?.pageSize ?? 100;
+        return this.paginate(mapped, page, pageSize);
     }
-    async getDocumentToc(productId) {
+    async getDocumentToc(productId, options) {
         // 搜索 API 需要 keyword 参数才能返回数据
         // 使用产品名称作为关键词搜索来获取文档列表
         const products = await this.getProductsFromSearch();
         const product = products.find((p) => p.productId === productId);
-        if (!product)
-            return [];
+        if (!product) {
+            return { items: [], total: 0, page: 1, pageSize: 200, hasMore: false };
+        }
         const url = `${SEARCH_API}/product/queryAll?index=cms_document&pageNo=1&pageSize=50&keyword=${encodeURIComponent(product.name)}&productId=${productId}&referrer=${encodeURIComponent(SUPPORT_URL)}`;
         const data = await this.fetchJson(url);
-        if (!data.data?.docList)
-            return [];
+        if (!data.data?.docList) {
+            return { items: [], total: 0, page: 1, pageSize: 200, hasMore: false };
+        }
         const tocMap = new Map();
         for (const doc of data.data.docList) {
             if (!doc.breadcrumb || doc.breadcrumb.length === 0)
@@ -106,7 +133,25 @@ export class CucloudAdapter extends CloudDocAdapter {
                 }
             }
         }
-        return Array.from(tocMap.values());
+        let items = Array.from(tocMap.values());
+        // Keyword filtering
+        if (options?.keyword) {
+            const keywords = options.keyword.trim().split(/\s+/).filter(Boolean);
+            if (keywords.length > 0) {
+                items = items.filter(item => {
+                    const text = (item.title || "").toLowerCase();
+                    return keywords.every(kw => text.includes(kw.toLowerCase()));
+                });
+            }
+        }
+        // Top-only: strip children
+        if (options?.topOnly) {
+            items = items.map(item => ({ pageId: item.pageId, title: item.title }));
+        }
+        // Pagination
+        const page = options?.page ?? 1;
+        const pageSize = options?.pageSize ?? 200;
+        return this.paginate(items, page, pageSize);
     }
     async searchDocuments(productId, keyword) {
         const url = `${SEARCH_API}/product/queryAll?index=cms_document&pageNo=1&pageSize=50&keyword=${encodeURIComponent(keyword)}&productId=${productId}&referrer=${encodeURIComponent(SUPPORT_URL)}`;

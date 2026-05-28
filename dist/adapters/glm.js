@@ -88,6 +88,34 @@ export class GlmAdapter extends CloudDocAdapter {
         return content;
     }
     /**
+     * 按关键词过滤项目（AND 逻辑）
+     */
+    filterByKeywords(items, keyword) {
+        if (!keyword)
+            return items;
+        const keywords = keyword.trim().split(/\s+/).filter(Boolean);
+        if (keywords.length === 0)
+            return items;
+        return items.filter(item => {
+            const text = (item.name || item.title || "").toLowerCase();
+            return keywords.every(kw => text.includes(kw.toLowerCase()));
+        });
+    }
+    /**
+     * 分页处理
+     */
+    paginate(items, page = 1, pageSize = 100) {
+        const start = (page - 1) * pageSize;
+        const paged = items.slice(start, start + pageSize);
+        return {
+            items: paged,
+            total: items.length,
+            page,
+            pageSize,
+            hasMore: start + pageSize < items.length,
+        };
+    }
+    /**
      * 从 llms-full.txt 中提取指定页面的内容
      *
      * llms-full.txt 格式：
@@ -113,30 +141,37 @@ export class GlmAdapter extends CloudDocAdapter {
         }
         return null;
     }
-    async listProducts() {
-        return [
+    async listProducts(options) {
+        const allProducts = [
             {
                 productId: "bigmodel",
                 name: "智谱 GLM API 文档",
                 description: "智谱开放平台 API 文档",
             },
         ];
+        const filtered = this.filterByKeywords(allProducts, options?.keyword);
+        return this.paginate(filtered, options?.page ?? 1, options?.pageSize ?? 100);
     }
-    async getDocumentToc(productId) {
+    async getDocumentToc(productId, options) {
         const entries = await this.parseLlmsTxt();
         // 构建目录列表（按 llms.txt 原始顺序，去重）
-        const toc = [];
+        const allToc = [];
         const seen = new Set();
         for (const entry of entries) {
             if (!seen.has(entry.path)) {
                 seen.add(entry.path);
-                toc.push({
+                allToc.push({
                     pageId: entry.path,
                     title: entry.title,
                 });
             }
         }
-        return toc;
+        let filtered = this.filterByKeywords(allToc, options?.keyword);
+        // If topOnly is true, strip children (none of our items have children, but honor the flag)
+        if (options?.topOnly) {
+            filtered = filtered.map(item => ({ ...item, children: undefined }));
+        }
+        return this.paginate(filtered, options?.page ?? 1, options?.pageSize ?? 200);
     }
     async searchDocuments(productId, keyword) {
         const entries = await this.parseLlmsTxt();

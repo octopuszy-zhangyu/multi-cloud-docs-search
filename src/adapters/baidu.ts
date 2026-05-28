@@ -1,5 +1,5 @@
 import * as cheerio from "cheerio";
-import { CloudDocAdapter, type Product, type TocItem, type SearchResult, type PageMetadata, type PriceItem, type PriceResult } from "./base.js";
+import { CloudDocAdapter, type Product, type TocItem, type SearchResult, type PageMetadata, type PriceItem, type PriceResult, type PaginatedResult, type ListProductsOptions, type TocOptions } from "./base.js";
 import { htmlToMarkdown } from "../utils/html-to-md.js";
 
 const BASE_URL = "https://cloud.baidu.com";
@@ -22,7 +22,7 @@ export class BaiduAdapter extends CloudDocAdapter {
     return res.text();
   }
 
-  async listProducts(): Promise<Product[]> {
+  async listProducts(options?: ListProductsOptions): Promise<PaginatedResult<Product>> {
     const url = `${BASE_URL}/doc/index.html`;
     const html = await this.fetchHtml(url);
     const $ = cheerio.load(html);
@@ -46,10 +46,16 @@ export class BaiduAdapter extends CloudDocAdapter {
       }
     });
 
-    return products;
+    // 过滤关键词
+    const filtered = this.filterByKeywords(products, options?.keyword);
+
+    // 分页
+    const page = options?.page ?? 1;
+    const pageSize = options?.pageSize ?? 100;
+    return this.paginate(filtered, page, pageSize);
   }
 
-  async getDocumentToc(productId: string): Promise<TocItem[]> {
+  async getDocumentToc(productId: string, options?: TocOptions): Promise<PaginatedResult<TocItem>> {
     const url = `${BASE_URL}/doc/${productId}/index.html`;
     const html = await this.fetchHtml(url);
     const $ = cheerio.load(html);
@@ -75,12 +81,24 @@ export class BaiduAdapter extends CloudDocAdapter {
       }
     });
 
-    return items;
+    // 过滤关键词
+    let filtered = this.filterByKeywords(items, options?.keyword);
+
+    // 如果 topOnly 为 true，移除 children
+    if (options?.topOnly) {
+      filtered = filtered.map(item => ({ ...item, children: undefined }));
+    }
+
+    // 分页
+    const page = options?.page ?? 1;
+    const pageSize = options?.pageSize ?? 200;
+    return this.paginate(filtered, page, pageSize);
   }
 
   async searchDocuments(productId: string, keyword: string): Promise<SearchResult[]> {
     // 百度云没有公开搜索 API，通过遍历文档目录做本地关键词匹配
-    const toc = await this.getDocumentToc(productId);
+    const tocResult = await this.getDocumentToc(productId);
+    const toc = tocResult.items;
     const lowerKeyword = keyword.toLowerCase();
 
     return toc
@@ -169,6 +187,28 @@ export class BaiduAdapter extends CloudDocAdapter {
     }
 
     return prices;
+  }
+
+  private filterByKeywords<T extends { name?: string; title?: string }>(items: T[], keyword?: string): T[] {
+    if (!keyword) return items;
+    const keywords = keyword.trim().split(/\s+/).filter(Boolean);
+    if (keywords.length === 0) return items;
+    return items.filter(item => {
+      const text = (item.name || item.title || "").toLowerCase();
+      return keywords.every(kw => text.includes(kw.toLowerCase()));
+    });
+  }
+
+  private paginate<T>(items: T[], page: number = 1, pageSize: number = 100): PaginatedResult<T> {
+    const start = (page - 1) * pageSize;
+    const paged = items.slice(start, start + pageSize);
+    return {
+      items: paged,
+      total: items.length,
+      page,
+      pageSize,
+      hasMore: start + pageSize < items.length,
+    };
   }
 
   async getProductPrice(productId?: string): Promise<PriceResult> {

@@ -17,17 +17,41 @@ export class MinimaxAdapter extends CloudDocAdapter {
         }
         return res.text();
     }
-    async listProducts() {
+    filterByKeywords(items, keyword) {
+        if (!keyword)
+            return items;
+        const keywords = keyword.trim().split(/\s+/).filter(Boolean);
+        if (keywords.length === 0)
+            return items;
+        return items.filter((item) => {
+            const text = (item.name || item.title || "").toLowerCase();
+            return keywords.every((kw) => text.includes(kw.toLowerCase()));
+        });
+    }
+    paginate(items, page = 1, pageSize = 100) {
+        const start = (page - 1) * pageSize;
+        const paged = items.slice(start, start + pageSize);
+        return {
+            items: paged,
+            total: items.length,
+            page,
+            pageSize,
+            hasMore: start + pageSize < items.length,
+        };
+    }
+    async listProducts(options) {
         // MiniMax 只有一个产品
-        return [
+        const allProducts = [
             {
                 productId: "minimax-api",
                 name: "MiniMax API 文档",
                 description: "MiniMax 开放平台 API 文档",
             },
         ];
+        const filtered = this.filterByKeywords(allProducts, options?.keyword);
+        return this.paginate(filtered, options?.page, options?.pageSize);
     }
-    async getDocumentToc(productId) {
+    async getDocumentToc(productId, options) {
         const text = await this.fetchText(LLMS_URL);
         const lines = text.split("\n");
         const items = [];
@@ -86,15 +110,23 @@ export class MinimaxAdapter extends CloudDocAdapter {
             }
         }
         // 清理空分组
-        return items.filter((item) => {
+        let result = items.filter((item) => {
             if (item.pageId === "" && item.children && item.children.length === 0) {
                 return false;
             }
             return true;
         });
+        // Apply topOnly: strip children from items
+        if (options?.topOnly) {
+            result = result.map((item) => ({ ...item, children: undefined }));
+        }
+        // Apply keyword filtering
+        const filtered = this.filterByKeywords(result, options?.keyword);
+        return this.paginate(filtered, options?.page, options?.pageSize ?? 200);
     }
     async searchDocuments(productId, keyword) {
-        const toc = await this.getDocumentToc(productId);
+        const tocResult = await this.getDocumentToc(productId);
+        const toc = tocResult.items;
         const lowerKeyword = keyword.toLowerCase();
         const results = [];
         const searchToc = (items) => {

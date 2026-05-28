@@ -1,5 +1,5 @@
 import * as cheerio from "cheerio";
-import { CloudDocAdapter, type Product, type TocItem, type SearchResult, type PageMetadata, type PriceItem, type PriceResult } from "./base.js";
+import { CloudDocAdapter, type Product, type TocItem, type SearchResult, type PageMetadata, type PriceItem, type PriceResult, type PaginatedResult, type ListProductsOptions, type TocOptions } from "./base.js";
 import { htmlToMarkdown } from "../utils/html-to-md.js";
 
 const BASE_URL = "https://docs.bigmodel.cn";
@@ -109,6 +109,34 @@ export class GlmAdapter extends CloudDocAdapter {
   }
 
   /**
+   * 按关键词过滤项目（AND 逻辑）
+   */
+  private filterByKeywords<T extends { name?: string; title?: string }>(items: T[], keyword?: string): T[] {
+    if (!keyword) return items;
+    const keywords = keyword.trim().split(/\s+/).filter(Boolean);
+    if (keywords.length === 0) return items;
+    return items.filter(item => {
+      const text = (item.name || item.title || "").toLowerCase();
+      return keywords.every(kw => text.includes(kw.toLowerCase()));
+    });
+  }
+
+  /**
+   * 分页处理
+   */
+  private paginate<T>(items: T[], page: number = 1, pageSize: number = 100): PaginatedResult<T> {
+    const start = (page - 1) * pageSize;
+    const paged = items.slice(start, start + pageSize);
+    return {
+      items: paged,
+      total: items.length,
+      page,
+      pageSize,
+      hasMore: start + pageSize < items.length,
+    };
+  }
+
+  /**
    * 从 llms-full.txt 中提取指定页面的内容
    *
    * llms-full.txt 格式：
@@ -142,34 +170,44 @@ export class GlmAdapter extends CloudDocAdapter {
     return null;
   }
 
-  async listProducts(): Promise<Product[]> {
-    return [
+  async listProducts(options?: ListProductsOptions): Promise<PaginatedResult<Product>> {
+    const allProducts: Product[] = [
       {
         productId: "bigmodel",
         name: "智谱 GLM API 文档",
         description: "智谱开放平台 API 文档",
       },
     ];
+
+    const filtered = this.filterByKeywords(allProducts, options?.keyword);
+    return this.paginate(filtered, options?.page ?? 1, options?.pageSize ?? 100);
   }
 
-  async getDocumentToc(productId: string): Promise<TocItem[]> {
+  async getDocumentToc(productId: string, options?: TocOptions): Promise<PaginatedResult<TocItem>> {
     const entries = await this.parseLlmsTxt();
 
     // 构建目录列表（按 llms.txt 原始顺序，去重）
-    const toc: TocItem[] = [];
+    const allToc: TocItem[] = [];
     const seen = new Set<string>();
 
     for (const entry of entries) {
       if (!seen.has(entry.path)) {
         seen.add(entry.path);
-        toc.push({
+        allToc.push({
           pageId: entry.path,
           title: entry.title,
         });
       }
     }
 
-    return toc;
+    let filtered = this.filterByKeywords(allToc, options?.keyword);
+
+    // If topOnly is true, strip children (none of our items have children, but honor the flag)
+    if (options?.topOnly) {
+      filtered = filtered.map(item => ({ ...item, children: undefined }));
+    }
+
+    return this.paginate(filtered, options?.page ?? 1, options?.pageSize ?? 200);
   }
 
   async searchDocuments(productId: string, keyword: string): Promise<SearchResult[]> {

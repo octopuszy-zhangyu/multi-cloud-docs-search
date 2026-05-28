@@ -29,11 +29,53 @@ const adapters: Record<string, CloudDocAdapter> = {
   deepseek: new DeepseekAdapter(),
 };
 
+/** 云厂商别名映射 */
+const providerAliases: Record<string, string> = {
+  // 腾讯云别名
+  tencentcloud: "tencent",
+  // 华为云别名
+  huaweicloud: "huawei",
+  // 阿里云别名
+  alibaba: "aliyun",
+  // 火山引擎别名
+  bytedance: "volcengine",
+  // 移动云别名
+  cmcc: "ecloud",
+  // 联通云别名
+  chinaunicom: "cucloud",
+  // 百度云别名
+  baiducloud: "baidu",
+  qianfan: "baidu",
+  // 阿里云百炼别名
+  dashscope: "bailian",
+  // 智谱别名
+  zhipu: "glm",
+  // Kimi 别名
+  moonshot: "kimi",
+};
+
 /** 获取指定云厂商的适配器实例 */
 export function getAdapter(provider: string): CloudDocAdapter {
-  const adapter = adapters[provider];
+  // 先尝试直接匹配
+  let normalizedProvider = provider.toLowerCase().replace(/[\s_-]/g, "");
+  let adapter = adapters[normalizedProvider];
+
+  // 再尝试别名映射
   if (!adapter) {
-    throw new Error(`不支持的云厂商: ${provider}，当前支持的厂商: ${Object.keys(adapters).join(", ")}`);
+    const alias = providerAliases[normalizedProvider];
+    if (alias) {
+      adapter = adapters[alias];
+    }
+  }
+
+  if (!adapter) {
+    const supported = Object.keys(adapters).join(", ");
+    const suggestions = Object.entries(providerAliases)
+      .filter(([k]) => k.includes(normalizedProvider) || normalizedProvider.includes(k))
+      .map(([k, v]) => `${k} → ${v}`)
+      .slice(0, 3);
+    const suggestionText = suggestions.length > 0 ? `\n\n您是否在找: ${suggestions.join(", ")}` : "";
+    throw new Error(`不支持的云厂商: ${provider}，当前支持的厂商: ${supported}${suggestionText}`);
   }
   return adapter;
 }
