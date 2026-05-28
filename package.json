@@ -1,6 +1,6 @@
 {
   "name": "multi-cloud-docs-search",
-  "version": "1.1.2",
+  "version": "1.2.0",
   "description": "MCP Server for multi-cloud provider documentation search",
   "license": "GPL-3.0-only",
   "type": "module",
