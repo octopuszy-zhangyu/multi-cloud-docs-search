@@ -54,7 +54,7 @@ export class HuaweiAdapter extends CloudDocAdapter {
         }
         return products;
     }
-    async getDocumentToc(productId) {
+    async getDocumentToc(productId, options) {
         const url = `${BASE_URL}/${productId}/v3_support_leftmenu_fragment.html`;
         const html = await this.fetchHtml(url);
         const $ = cheerio.load(html);
@@ -77,6 +77,16 @@ export class HuaweiAdapter extends CloudDocAdapter {
                 });
             }
         });
+        // 关键词过滤
+        if (options?.keyword) {
+            const keywords = options.keyword.trim().split(/\s+/).filter(Boolean);
+            if (keywords.length > 0) {
+                return items.filter(item => {
+                    const text = (item.title || "").toLowerCase();
+                    return keywords.every(kw => text.includes(kw.toLowerCase()));
+                });
+            }
+        }
         return items;
     }
     async searchDocuments(productId, keyword) {
@@ -156,6 +166,7 @@ export class HuaweiAdapter extends CloudDocAdapter {
                             unit: "",
                             currency: "CNY",
                             source: sourceUrl,
+                            note: "价格数据来源：华为云文档（文档中的价格可能为示例或参考价，标准定价以官网价格计算器为准）",
                         });
                     }
                 }
@@ -307,6 +318,7 @@ export class HuaweiAdapter extends CloudDocAdapter {
                             unit: "元/小时",
                             currency: "CNY",
                             source: `https://www.huaweicloud.com/pricing/calculator.html#/${urlPath}`,
+                            note: "价格数据来源：华为云官网价格计算器（标准定价，不含促销活动）",
                         });
                     }
                 }
@@ -324,6 +336,7 @@ export class HuaweiAdapter extends CloudDocAdapter {
                             unit: "元/月",
                             currency: "CNY",
                             source: `https://www.huaweicloud.com/pricing/calculator.html#/${urlPath}`,
+                            note: "价格数据来源：华为云官网价格计算器（标准定价，不含促销活动）",
                         });
                     }
                 }
@@ -341,6 +354,7 @@ export class HuaweiAdapter extends CloudDocAdapter {
                             unit: "元/年",
                             currency: "CNY",
                             source: `https://www.huaweicloud.com/pricing/calculator.html#/${urlPath}`,
+                            note: "价格数据来源：华为云官网价格计算器（标准定价，不含促销活动）",
                         });
                     }
                 }

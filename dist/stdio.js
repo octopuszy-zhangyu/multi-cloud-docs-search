@@ -39,8 +39,8 @@ const server = new McpServer({
 
 ## 核心原则（重要）
 
-1. **优先浏览目录，迫不得已再搜索**：先调用 get_document_toc 查看文档目录结构，定位到相关章节后，再决定是否调用 search_documents。search_documents 的关键词不宜太具体（如"价格 4C8G"会返回空），应使用宽泛关键词（如"计费""价格""规格"）。
-2. **严格遵循 metadata → content 顺序**：必须先调用 get_page_metadata 获取 contentPath，再将 contentPath 传给 get_page_content。不能跳过 metadata 直接构造 URL。
+1. **优先浏览目录，迫不得已再搜索**：先调用 get_document_toc 查看文档目录结构，定位到相关章节后，再决定是否调用 search_documents。search_documents 的关键词不宜太具体（如"价格 4C8G"会返回空），应使用宽泛关键词（如"计费""价格""规格"）。**关键词自动扩展**：当搜索结果为空时，系统会自动尝试去掉具体规格词（如 4C8G、5M）后重新搜索。
+2. **严格遵循 metadata → content 顺序**：必须先调用 get_page_metadata 获取 contentPath，再将 contentPath 传给 get_page_content。不能跳过 metadata 直接构造 URL。**contentPath 已统一为完整 URL 格式**，可直接传给 get_page_content。
 3. **并行 Agent 模式（重要）**：当需要查询多个云厂商时，必须为每个云厂商分别启动一个独立的 Agent 并行执行，而不是串行逐个查询。每个 Agent 负责一个云厂商的完整查询流程（list_products → get_document_toc → get_page_metadata → get_page_content），最后汇总所有 Agent 的结果。
 4. **list_products 结果可能过大**：阿里云等厂商的产品列表可能超过 token 限制，需分块读取或 grep 过滤。
 
@@ -93,22 +93,33 @@ const server = new McpServer({
 
 ### 价格查询流程（当用户询问价格时）
 
-**优先从文档目录定位定价页面**（推荐）：
-1. 获取产品列表：调用 list_products 获取产品 productId（可并行查询多个厂商）
-2. 获取文档目录：调用 get_document_toc 查看目录，寻找"计费说明""价格""定价""计费"等章节
-3. 定位定价页面：从目录中找到定价相关章节的 pageId
-4. 获取定价页面内容：调用 get_page_metadata → get_page_content 获取定价页面 Markdown 内容
-5. 提取价格表：从 Markdown 内容中解析价格表格
-6. 总结回答
+**价格查询三步法（重要）**：
+1. **先使用 get_product_price_quick**：对于已知产品 ID 的场景（如 ECS/CVM/云电脑），直接调用 get_product_price_quick 获取定价页面 URL，绕过完整的目录浏览流程
+2. **search_documents 搜索宽泛关键词**：调用 search_documents({ provider: "xxx", productId: "xxx", keyword: "价格" }) — **不要先遍历产品目录**，不要用"4C8G"等具体规格作为搜索词
+3. **搜索失败逐级放宽**：先搜"价格"，空则搜"计费"，再空则搜"规格"；不要反复用同类型的关键词
+4. **get_product_price 回退**：文档找不到价格时调用 get_product_price
 
-**搜索回退**（目录中找不到定价章节时）：
-1. 调用 search_documents({ provider: "xxx", productId: "xxx", keyword: "计费" }) 搜索定价相关页面（用宽泛关键词）
-2. 获取搜索结果中的 pageId，调用 get_page_metadata → get_page_content
-3. 提取价格信息
+**不需要先 list_products 获取所有产品**：搜索价格时不需要遍历目录树，直接使用 get_product_price_quick 或 search_documents 搜索定价关键词即可。
 
-**get_product_price 回退**（文档中找不到价格时）：
-1. 调用 get_product_price({ provider: "xxx" }) 获取价格数据
-2. 如果返回空，尝试带 productId 调用：get_product_price({ provider: "xxx", productId: "xxx" })
+**价格数据注意事项**：
+- 阿里云、腾讯云、华为云的文档中通常只有折扣框架，不含精确基准价格（价格在独立价格计算器页面）
+- 天翼云、火山引擎的文档中包含价格表，可直接通过 search_documents + get_page_content 获取
+- AI 厂商（DeepSeek、MiniMax、Kimi、百炼）定价可通过 get_product_price 获取
+- 华为云等动态渲染的价格页面，WebFetch 无法抓取，应直接告知用户使用官网价格计算器
+- **价格数据来源已标注**：华为云的价格数据会标注来源（官网价格计算器或文档），便于区分标准定价和参考价
+
+**ECS/CVM 4C8G 价格查询速查**：
+
+| 厂商 | 获取方式 | 说明 |
+|------|---------|------|
+| 天翼云 | get_product_price_quick(provider="ctyun", productId="10027004") 或 search_documents → get_page_content | 文档含价格表 |
+| 火山引擎 | get_product_price_quick(provider="volcengine", productId="ECS") 或 get_product_price | GetTable API 返回完整定价表格 |
+| 腾讯云 | **直接使用 get_product_price(provider="tencent", productId="cvm")** | workbench API 返回全量 CVM 实例价格 |
+| 阿里云 | get_product_price_quick(provider="aliyun", productId="ecs") | 文档无价格表，需访问官网定价页 |
+| 华为云 | get_product_price(provider="huawei", productId="ecs") | 价格计算器 API 返回标准定价 |
+| 移动云 | search_documents(productId="706", keyword="价格") → get_page_content(hash) | 文档含价格信息 |
+
+**不要对 get_product_price 已覆盖的厂商额外搜索**：腾讯云 CVM 价格直接通过 get_product_price 获取，无需搜索文档目录。
 
 ## 各厂商特殊说明
 
@@ -205,7 +216,7 @@ const server = new McpServer({
 - kimi - 月之暗面 Kimi`,
 });
 server.registerTool("list_products", {
-    description: "获取指定云厂商的产品文档列表，返回产品名称和对应的 productId。支持关键词过滤（多个空格分隔的关键词用 AND 逻辑）和分页",
+    description: "获取指定云厂商的产品文档列表，返回产品名称和对应的 productId。支持关键词过滤（多个空格分隔的关键词用 AND 逻辑）和分页。支持的 provider：ctyun(天翼云), aliyun(阿里云), volcengine(火山引擎), tencent(腾讯云), huawei(华为云), ecloud(移动云), cucloud(联通云), bailian(阿里云百炼), baidu(百度云), deepseek(DeepSeek), glm(智谱GLM), minimax(MiniMax), kimi(月之暗面Kimi)。别名：tencentcloud→tencent, huaweicloud→huawei, alibaba→aliyun, cmcc→ecloud, chinaunicom→cucloud",
     inputSchema: z.object({
         provider: z.string().describe("云厂商标识，如 'ctyun'"),
         keyword: z.string().optional().describe("精简关键词过滤（支持多个空格分隔，如 'ecs cvm'），多个关键词用 AND 逻辑（必须全部匹配）"),
@@ -334,7 +345,7 @@ server.registerTool("get_document_toc", {
     };
 });
 server.registerTool("search_documents", {
-    description: "在指定云厂商的产品文档中按关键词搜索，返回匹配的页面列表。关键词支持多个空格分隔（AND 逻辑），建议使用精简关键词",
+    description: "在指定云厂商的产品文档中按关键词搜索，返回匹配的页面列表。关键词支持多个空格分隔（AND 逻辑），建议使用精简关键词。当搜索结果为空时，系统会自动尝试去掉具体规格词（如 4C8G、5M）后重新搜索",
     inputSchema: z.object({
         provider: z.string().describe("云厂商标识"),
         productId: z.string().describe("产品文档 ID"),
@@ -356,6 +367,51 @@ server.registerTool("search_documents", {
             return keywords.every(kw => text.includes(kw.toLowerCase()));
         });
     }
+    // 关键词自动扩展：当搜索结果为空时，尝试去掉具体规格词（如 4C8G、5M 等），保留核心词
+    if (filteredResults.length === 0 && keywords.length > 1) {
+        // 过滤掉看起来像具体规格的词（包含数字+字母组合、纯数字、具体配置描述）
+        const specPattern = /^[\d.]+[cCgGmMkKtTbB]*$|^\d+[cC]\d+[gG]$|^\d+Mbps$|^\d+M$/;
+        const coreKeywords = keywords.filter(kw => !specPattern.test(kw) && !/^\d+$/.test(kw));
+        if (coreKeywords.length > 0 && coreKeywords.length < keywords.length) {
+            const coreKeyword = coreKeywords.join(" ");
+            const coreResults = await adapter.searchDocuments(productId, coreKeyword);
+            if (coreResults.length > 0) {
+                return {
+                    content: [{
+                            type: "text",
+                            text: JSON.stringify({
+                                items: coreResults,
+                                total: coreResults.length,
+                                message: `原始关键词 "${searchKeyword}" 过于具体，已自动扩展为 "${coreKeyword}"，找到 ${coreResults.length} 个匹配页面。建议：使用宽泛关键词如"价格"、"计费"、"规格"等`,
+                                autoExpanded: true,
+                                originalKeyword: searchKeyword,
+                                expandedKeyword: coreKeyword,
+                            }, null, 2),
+                        }],
+                };
+            }
+        }
+        // 如果核心词仍然为空，尝试只使用第一个非数字词
+        const firstWord = keywords.find(kw => !/^\d+$/.test(kw) && !specPattern.test(kw));
+        if (firstWord) {
+            const fallbackResults = await adapter.searchDocuments(productId, firstWord);
+            if (fallbackResults.length > 0) {
+                return {
+                    content: [{
+                            type: "text",
+                            text: JSON.stringify({
+                                items: fallbackResults,
+                                total: fallbackResults.length,
+                                message: `原始关键词 "${searchKeyword}" 过于具体，已自动扩展为 "${firstWord}"，找到 ${fallbackResults.length} 个匹配页面。建议：使用宽泛关键词如"价格"、"计费"、"规格"等`,
+                                autoExpanded: true,
+                                originalKeyword: searchKeyword,
+                                expandedKeyword: firstWord,
+                            }, null, 2),
+                        }],
+                };
+            }
+        }
+    }
     return {
         content: [{
                 type: "text",
@@ -363,7 +419,7 @@ server.registerTool("search_documents", {
                     items: filteredResults,
                     total: filteredResults.length,
                     message: filteredResults.length === 0
-                        ? `未找到同时匹配 "${searchKeyword}" 的页面`
+                        ? `未找到同时匹配 "${searchKeyword}" 的页面。建议：使用更宽泛的关键词，如"价格"、"计费"、"规格"、"配置"等，不要使用"4C8G"等具体规格组合`
                         : `找到 ${filteredResults.length} 个匹配的页面`,
                 }, null, 2),
             }],
@@ -378,18 +434,131 @@ server.registerTool("get_page_metadata", {
 }, async ({ provider, pageId }) => {
     const adapter = getAdapter(provider);
     const metadata = await adapter.getPageMetadata(pageId);
+    // 统一 contentPath 格式：确保返回的 contentPath 是完整可访问的 URL
+    // 对于返回相对路径的适配器，补全为完整 URL
+    if (metadata.contentPath && !metadata.contentPath.startsWith("http")) {
+        // 火山引擎的 contentPath 是 "productId/docId" 格式，通过 API 获取，不需要补全
+        // 移动云的 contentPath 是 hash 字符串，直接传给 get_page_content 即可
+        // 其他相对路径需要补全
+        if (provider === "volcengine" || provider === "ecloud") {
+            // 这些厂商的 contentPath 是特殊格式，不需要补全
+        }
+        else if (metadata.contentPath.startsWith("/")) {
+            // 相对路径，补全为完整 URL
+            const baseUrls = {
+                "aliyun": "https://help.aliyun.com",
+                "bailian": "https://help.aliyun.com",
+                "tencent": "https://cloud.tencent.com",
+                "huawei": "https://support.huaweicloud.com",
+                "ctyun": "https://www.ctyun.cn",
+                "baidu": "https://cloud.baidu.com",
+                "deepseek": "https://api-docs.deepseek.com",
+                "glm": "https://docs.bigmodel.cn",
+                "minimax": "https://platform.minimaxi.com",
+                "kimi": "https://platform.kimi.com",
+                "cucloud": "https://support.cucloud.cn",
+            };
+            const baseUrl = baseUrls[provider];
+            if (baseUrl) {
+                metadata.contentPath = `${baseUrl}${metadata.contentPath}`;
+            }
+        }
+    }
     return { content: [{ type: "text", text: JSON.stringify(metadata, null, 2) }] };
 });
 server.registerTool("get_product_price", {
-    description: "获取指定云厂商的产品价格信息。不传 productId 则返回所有产品价格概览",
+    description: "获取指定云厂商的产品价格信息。不传 productId 则返回所有产品价格概览。支持精确价格的厂商：腾讯云 CVM（productId 传 \"cvm\" 或 \"213\"）、天翼云云电脑（productId 传 \"10027004\"）、AI 厂商（DeepSeek、MiniMax、Kimi、百炼）。阿里云、华为云文档不含精确价格，需使用官网价格计算器。如需快速获取定价页面 URL，请使用 get_product_price_quick 工具",
     inputSchema: z.object({
         provider: z.string().describe("云厂商标识"),
-        productId: z.string().optional().describe("产品 ID（可选，不传则返回所有产品价格概览）"),
+        productId: z.string().optional().describe("产品 ID（可选，不传则返回所有产品价格概览）。腾讯云传 \"cvm\" 或 \"213\"，天翼云传 \"10027004\"（云电脑）或 \"11061839\"（Token 服务）"),
     }).strict(),
 }, async ({ provider, productId }) => {
     const adapter = getAdapter(provider);
     const result = await adapter.getProductPrice(productId);
     return { content: [{ type: "text", text: JSON.stringify(result, null, 2) }] };
+});
+server.registerTool("get_product_price_quick", {
+    description: "【快捷定价查询】直接返回已知的定价页面 URL 和价格信息，绕过完整的目录浏览流程，大幅减少工具调用次数。适用于已知产品 ID 的场景（如 ECS/CVM/云电脑等）。支持的 provider 和 productId 见 get_product_price",
+    inputSchema: z.object({
+        provider: z.string().describe("云厂商标识"),
+        productId: z.string().optional().describe("产品 ID（可选）"),
+    }).strict(),
+}, async ({ provider, productId }) => {
+    // 已知的定价页面速查表
+    const priceQuickMap = {
+        "ctyun": {
+            "10027004": [{ url: "https://www.ctyun.cn/document/10027004", description: "天翼云电脑（政企版）价格" }],
+            "10026730": [{ url: "https://www.ctyun.cn/document/10026730", description: "弹性云主机 ECS 价格" }],
+            "11061839": [{ url: "https://www.ctyun.cn/document/11061839", description: "Token 服务价格" }],
+        },
+        "aliyun": {
+            "ecs": [{ url: "https://help.aliyun.com/zh/ecs/billing", description: "云服务器 ECS 计费说明（文档中无具体价格表，需访问 aliyun.com/price）" }],
+        },
+        "tencent": {
+            "cvm": [{ url: "https://buy.cloud.tencent.com/price/cvm/overview", description: "云服务器 CVM 价格概览" }],
+            "213": [{ url: "https://buy.cloud.tencent.com/price/cvm/overview", description: "云服务器 CVM 价格概览" }],
+        },
+        "huawei": {
+            "ecs": [{ url: "https://www.huaweicloud.com/pricing/calculator.html#/ecs", description: "弹性云服务器 ECS 价格计算器" }],
+            "maas": [{ url: "https://support.huaweicloud.com/price-maas/price-maas-0002.html", description: "MaaS 模型即服务价格" }],
+        },
+        "ecloud": {
+            "706": [{ url: "https://ecloud.10086.cn/op-help-center/doc/category/706", description: "云主机 ECS 价格" }],
+        },
+        "volcengine": {
+            "ECS": [{ url: "https://www.volcengine.com/pricing?product=ECS", description: "ECS 价格" }],
+        },
+        "deepseek": {
+            "api-docs": [{ url: "https://api-docs.deepseek.com/quick_start/pricing", description: "DeepSeek API 定价" }],
+        },
+        "minimax": {
+            "minimax-api": [{ url: "https://platform.minimaxi.com/docs/guides/pricing-paygo", description: "MiniMax 定价" }],
+        },
+        "kimi": {
+            "kimi-api": [{ url: "https://platform.kimi.com/docs/pricing", description: "Kimi API 定价" }],
+        },
+        "bailian": {
+            "model-studio": [{ url: "https://help.aliyun.com/zh/model-studio/billing", description: "百炼大模型服务平台计费说明" }],
+        },
+        "baidu": {
+            "BML": [{ url: "https://cloud.baidu.com/doc/BML/s/9kq7tfy4p", description: "BML 全功能AI开发平台价格" }],
+        },
+        "glm": {
+            "bigmodel": [{ url: "https://open.bigmodel.cn/pricing", description: "智谱 GLM 定价" }],
+        },
+    };
+    const providerMap = priceQuickMap[provider];
+    if (!providerMap) {
+        // 没有速查数据，回退到 get_product_price
+        const adapter = getAdapter(provider);
+        const result = await adapter.getProductPrice(productId);
+        return { content: [{ type: "text", text: JSON.stringify(result, null, 2) }] };
+    }
+    if (productId && providerMap[productId]) {
+        return {
+            content: [{
+                    type: "text",
+                    text: JSON.stringify({
+                        provider,
+                        productId,
+                        quickLinks: providerMap[productId],
+                        message: "以上为已知的定价页面 URL，可直接通过 get_page_metadata + get_page_content 获取价格信息，或使用 get_product_price 获取结构化价格数据",
+                    }, null, 2),
+                }],
+        };
+    }
+    // 没有匹配的 productId，返回所有已知的定价页面
+    const allLinks = Object.entries(providerMap).flatMap(([pid, links]) => links.map(l => ({ productId: pid, ...l })));
+    return {
+        content: [{
+                type: "text",
+                text: JSON.stringify({
+                    provider,
+                    quickLinks: allLinks,
+                    message: "以上为已知的定价页面 URL。如需查询具体产品价格，请指定 productId 参数",
+                }, null, 2),
+            }],
+    };
 });
 server.registerTool("get_page_content", {
     description: "获取文档页面的完整 Markdown 正文。参数 contentPath 来自 get_page_metadata 返回的 contentPath",

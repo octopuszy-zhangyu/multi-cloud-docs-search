@@ -64,12 +64,15 @@ export function getAdapter(provider) {
     }
     if (!adapter) {
         const supported = Object.keys(adapters).join(", ");
+        const aliasList = Object.entries(providerAliases)
+            .map(([k, v]) => `${k}→${v}`)
+            .join(", ");
         const suggestions = Object.entries(providerAliases)
             .filter(([k]) => k.includes(normalizedProvider) || normalizedProvider.includes(k))
             .map(([k, v]) => `${k} → ${v}`)
             .slice(0, 3);
         const suggestionText = suggestions.length > 0 ? `\n\n您是否在找: ${suggestions.join(", ")}` : "";
-        throw new Error(`不支持的云厂商: ${provider}，当前支持的厂商: ${supported}${suggestionText}`);
+        throw new Error(`不支持的云厂商: ${provider}\n\n当前支持的 provider: ${supported}\n\n支持的别名: ${aliasList}${suggestionText}`);
     }
     return adapter;
 }

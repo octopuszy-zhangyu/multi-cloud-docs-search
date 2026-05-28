@@ -26,7 +26,7 @@ export class BailianAdapter extends CloudDocAdapter {
             },
         ];
     }
-    async getDocumentToc(productId) {
+    async getDocumentToc(productId, options) {
         // 百炼的 product.json API 返回 302 重定向，需从首页 HTML 解析目录
         const url = `${BASE_URL}/zh/model-studio/`;
         const html = await this.fetchHtml(url);
@@ -101,6 +101,16 @@ export class BailianAdapter extends CloudDocAdapter {
                     }
                 }
             });
+        }
+        // 关键词过滤
+        if (options?.keyword) {
+            const keywords = options.keyword.trim().split(/\s+/).filter(Boolean);
+            if (keywords.length > 0) {
+                return items.filter(item => {
+                    const text = (item.title || "").toLowerCase();
+                    return keywords.every(kw => text.includes(kw.toLowerCase()));
+                });
+            }
         }
         return items;
     }

@@ -77,7 +77,7 @@ export class AliyunAdapter extends CloudDocAdapter {
     /**
      * 从产品级 llms.txt 获取文档目录
      */
-    async getDocumentToc(productId) {
+    async getDocumentToc(productId, options) {
         const text = await this.fetchText(`${BASE_URL}/zh/${productId}/llms.txt`);
         const entries = this.parseLlmsTxt(text);
         const items = [];
@@ -86,6 +86,16 @@ export class AliyunAdapter extends CloudDocAdapter {
             if (!seen.has(entry.path)) {
                 seen.add(entry.path);
                 items.push({ pageId: entry.path, title: entry.title });
+            }
+        }
+        // 关键词过滤
+        if (options?.keyword) {
+            const keywords = options.keyword.trim().split(/\s+/).filter(Boolean);
+            if (keywords.length > 0) {
+                return items.filter(item => {
+                    const text = (item.title || "").toLowerCase();
+                    return keywords.every(kw => text.includes(kw.toLowerCase()));
+                });
             }
         }
         return items;
@@ -188,6 +198,8 @@ export class AliyunAdapter extends CloudDocAdapter {
     }
     async getProductPrice(productId) {
         const prices = [];
+        let source = `${BASE_URL}/price`;
+        let updateDate;
         if (productId) {
             // 尝试获取产品定价文档
             const priceUrls = [
@@ -202,6 +214,7 @@ export class AliyunAdapter extends CloudDocAdapter {
                     const parsed = this.parsePriceTable(markdown);
                     if (parsed.length > 0) {
                         prices.push(...parsed);
+                        source = url;
                         break;
                     }
                 }
@@ -209,13 +222,90 @@ export class AliyunAdapter extends CloudDocAdapter {
                     continue;
                 }
             }
+            // 如果文档中没有价格表，尝试从阿里云独立定价页面抓取
+            if (prices.length === 0) {
+                try {
+                    const pricePageUrl = `${BASE_URL}/zh/${productId}/billing`;
+                    const html = await this.fetchText(pricePageUrl);
+                    const $ = cheerio.load(html);
+                    // 尝试从页面中提取价格表格
+                    $("table").each((_, table) => {
+                        const rows = [];
+                        $(table).find("tr").each((_, tr) => {
+                            const cells = [];
+                            $(tr).find("th, td").each((_, cell) => {
+                                cells.push($(cell).text().trim().replace(/\s+/g, " "));
+                            });
+                            if (cells.length > 0) {
+                                rows.push("| " + cells.join(" | ") + " |");
+                            }
+                        });
+                        if (rows.length > 1) {
+                            const headerCells = rows[0].split("|").filter((_, i, arr) => i > 0 && i < arr.length - 1);
+                            const separator = "| " + headerCells.map(() => "---").join(" | ") + " |";
+                            rows.splice(1, 0, separator);
+                            const tableMd = rows.join("\n");
+                            const parsed = this.parsePriceTable(tableMd);
+                            if (parsed.length > 0) {
+                                prices.push(...parsed);
+                                source = pricePageUrl;
+                            }
+                        }
+                    });
+                    // 如果表格解析失败，尝试从页面文本中提取价格信息
+                    if (prices.length === 0) {
+                        const bodyText = $("body").text();
+                        // 匹配类似 "ecs.g7.xlarge：0.42元/小时" 或 "2核4G 251元/月" 的价格模式
+                        const pricePatterns = [
+                            /([a-zA-Z0-9_.-]+)[：:]\s*(\d+\.?\d*)\s*元\/([^，,\s]+)/g,
+                            /(\d+核\d+[Gg])\s*(\d+\.?\d*)\s*元\/([^，,\s]+)/g,
+                        ];
+                        for (const pattern of pricePatterns) {
+                            let match;
+                            while ((match = pattern.exec(bodyText)) !== null) {
+                                const spec = match[1].trim();
+                                const price = parseFloat(match[2]);
+                                const unit = match[3].trim();
+                                if (!isNaN(price) && price > 0) {
+                                    prices.push({
+                                        productName: productId,
+                                        specification: spec,
+                                        billingMode: unit.includes("小时") || unit.includes("h") ? "按量" : "包年包月",
+                                        price,
+                                        unit: `元/${unit}`,
+                                        currency: "CNY",
+                                        source: pricePageUrl,
+                                        note: "从文档页面提取的价格，可能为示例价格，实际价格以官网定价页为准",
+                                    });
+                                }
+                            }
+                        }
+                    }
+                }
+                catch {
+                    // 定价页面抓取失败不影响结果
+                }
+            }
+            // 如果仍然没有价格数据，添加提示信息
+            if (prices.length === 0) {
+                prices.push({
+                    productName: productId,
+                    specification: "",
+                    billingMode: "",
+                    price: 0,
+                    unit: "",
+                    currency: "CNY",
+                    source: "https://www.aliyun.com/price/product",
+                    note: "阿里云未在文档中公开具体价格表，请访问阿里云官网定价页查询实时价格",
+                });
+            }
         }
         return {
             provider: this.provider,
             name: this.name,
             prices,
             source: productId ? `${BASE_URL}/zh/${productId}/billing` : `${BASE_URL}/price`,
-            updateDate: undefined,
+            updateDate,
         };
     }
 }

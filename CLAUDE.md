@@ -42,11 +42,12 @@ src/
 | 工具 | 参数 | 用途 |
 |------|------|------|
 | `list_products` | provider | 获取所有产品文档列表 |
-| `get_document_toc` | provider, productId | 获取文档目录 |
-| `search_documents` | provider, productId, keyword | 搜索文档 |
-| `get_page_metadata` | provider, pageId | 获取页面元信息 |
+| `get_document_toc` | provider, productId | 获取文档目录（支持 keyword 过滤） |
+| `search_documents` | provider, productId, keyword | 搜索文档（支持关键词自动扩展） |
+| `get_page_metadata` | provider, pageId | 获取页面元信息（contentPath 已统一为完整 URL） |
 | `get_page_content` | provider, contentPath | 获取 Markdown 正文 |
 | `get_product_price` | provider, productId? | 获取产品价格信息 |
+| `get_product_price_quick` | provider, productId? | **快捷定价查询** — 直接返回已知定价页面 URL，绕过目录浏览 |
 
 ## MCP 工具使用指引（重要）
 
@@ -57,13 +58,21 @@ src/
 
 ### 搜索注意事项
 - 搜索关键词要宽泛：如搜价格用"计费""价格""规格"，不要用"价格 4C8G"这种具体组合
+- **关键词自动扩展**：当 `search_documents` 返回空结果时，系统会自动去掉具体规格词（如 4C8G、5M）后重新搜索
 - `list_products` 结果可能过大（如阿里云），需分块读取或 grep 过滤
+
+### 价格查询流程（优化版）
+1. **优先使用 `get_product_price_quick`**：对于已知产品 ID 的场景，直接获取定价页面 URL
+2. **`search_documents` 搜索宽泛关键词**：用"价格""计费"等宽泛词
+3. **`get_product_price` 回退**：文档找不到价格时调用
 
 ### 各厂商特殊说明
 - **联通云 cucloud**：文档详情页为 Vue SPA 有反爬保护，`get_page_content` 返回搜索 API 摘要而非完整页面，价格信息需从搜索摘要中提取
 - **移动云 ecloud**：contentPath 是 hash 字符串（如 `60daff9598d5c8fe58d847009f94c256`）而非 URL，直接传给 `get_page_content` 即可
 - **华为云 CloudPond 云桌面**：文档只有规格清单，具体价格需联系销售
 - **腾讯云云桌面**：文档未公开具体价格，需官网价格计算器
+- **华为云价格数据来源已标注**：价格数据会标注来源（官网价格计算器或文档），便于区分标准定价和参考价
+- **阿里云文档无价格表**：阿里云 ECS 等产品的文档中无具体价格表，`get_product_price` 会返回提示信息并指向官网定价页
 
 ## 当前支持的云厂商
 
@@ -126,21 +135,21 @@ npm run build    # TypeScript 编译检查
 
 ### 价格获取策略
 
-| 厂商 | 文档价格 | get_product_price |
-|------|---------|-------------------|
-| deepseek | `/quick_start/pricing` | ✅ 可用 |
-| minimax | `/docs/guides/pricing-paygo` | ✅ 可用 |
-| kimi | `/docs/pricing` | ⚠️ 待确认路径 |
-| bailian | `/zh/model-studio/billing` | ✅ 可用 |
-| glm | `open.bigmodel.cn/pricing` | ⚠️ SPA 页面 |
-| ctyun | 文档计费说明 | ✅ 可用（需 productId） |
-| aliyun | 文档计费说明 | ✅ 可用（需 productId） |
-| volcengine | 文档计费规则 | ✅ 可用（通过 GetTable API 获取完整定价表格） |
-| tencent | 文档计费说明 | ✅ 可用（CVM 通过 DescribeZoneInstanceConfigInfos API 获取全量价格） |
-| huawei | 文档计费说明 | ✅ 可用（通过 export/productlist API 获取全量价格） |
-| ecloud | 文档价格页面 | ⚠️ 待完善 |
-| cucloud | 文档价格页面 | ⚠️ 待完善 |
-| baidu | 产品页内嵌数据 | ⚠️ 待完善 |
+| 厂商 | 文档价格 | get_product_price | get_product_price_quick |
+|------|---------|-------------------|------------------------|
+| deepseek | `/quick_start/pricing` | ✅ 可用 | ✅ 支持 |
+| minimax | `/docs/guides/pricing-paygo` | ✅ 可用 | ✅ 支持 |
+| kimi | `/docs/pricing` | ✅ 可用 | ✅ 支持 |
+| bailian | `/zh/model-studio/billing` | ✅ 可用 | ✅ 支持 |
+| glm | `open.bigmodel.cn/pricing` | ⚠️ SPA 页面 | ✅ 支持 |
+| ctyun | 文档计费说明 | ✅ 可用（需 productId） | ✅ 支持 |
+| aliyun | 文档计费说明 | ✅ 可用（需 productId，文档无价格表时返回提示） | ✅ 支持 |
+| volcengine | 文档计费规则 | ✅ 可用（GetTable API） | ✅ 支持 |
+| tencent | 文档计费说明 | ✅ 可用（CVM API） | ✅ 支持 |
+| huawei | 文档计费说明 | ✅ 可用（export/productlist API，已标注数据来源） | ✅ 支持 |
+| ecloud | 文档价格页面 | ⚠️ 待完善 | ✅ 支持 |
+| cucloud | 文档价格页面 | ⚠️ 待完善 | ❌ 待完善 |
+| baidu | 产品页内嵌数据 | ⚠️ 待完善 | ✅ 支持 |
 
 ## 注意事项
 
@@ -220,6 +229,11 @@ get_product_price({ provider: "tencent" })
 get_product_price({ provider: "tencent", productId: "cvm" })
 get_product_price({ provider: "huawei" })
 get_product_price({ provider: "huawei", productId: "maas" })
+
+# 快捷定价查询
+get_product_price_quick({ provider: "tencent", productId: "cvm" })
+get_product_price_quick({ provider: "aliyun", productId: "ecs" })
+get_product_price_quick({ provider: "huawei", productId: "ecs" })
 ```
 
 ### 验证原则
