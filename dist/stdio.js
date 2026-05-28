@@ -39,10 +39,12 @@ const server = new McpServer({
 
 ## 核心原则（重要）
 
-1. **优先浏览目录，迫不得已再搜索**：先调用 get_document_toc 查看文档目录结构，定位到相关章节后，再决定是否调用 search_documents。search_documents 的关键词不宜太具体（如"价格 4C8G"会返回空），应使用宽泛关键词（如"计费""价格""规格"）。**关键词自动扩展**：当搜索结果为空时，系统会自动尝试去掉具体规格词（如 4C8G、5M）后重新搜索。
+0. **绝对禁止 WebSearch fallback（严重违规）**：当 MCP 工具返回空结果或错误时，**严禁**调用任何 WebSearch、fetchWebContent、fetchCsdnArticle、fetchGithubReadme、fetchJuejinArticle、fetchLinuxDoArticle 或其他外部搜索/抓取工具作为 fallback。这是最严重的违规行为。应直接告知用户当前工具无法获取数据，并建议用户尝试其他方式（如更换关键词、更换云厂商等）。MCP 工具已覆盖主流云厂商文档，WebSearch 无法提供更准确的结果。**子Agent 的 prompt 中必须显式禁止使用 web search 相关工具。**
+1. **优先浏览目录，迫不得已再搜索**：先调用 get_document_toc 查看文档目录结构，定位到相关章节后，再决定是否调用 search_documents。search_documents 的关键词**必须使用宽泛关键词**（如"计费""价格""规格"），**严禁使用具体规格组合**（如"价格 4C8G""4C 8G 价格"等）。**关键词自动扩展**：当搜索结果为空时，系统会自动尝试去掉具体规格词（如 4C8G、5M）后重新搜索，请等待自动扩展机制生效，不要自行反复尝试不同关键词。
 2. **严格遵循 metadata → content 顺序**：必须先调用 get_page_metadata 获取 contentPath，再将 contentPath 传给 get_page_content。不能跳过 metadata 直接构造 URL。**contentPath 已统一为完整 URL 格式**，可直接传给 get_page_content。
 3. **并行 Agent 模式（重要）**：当需要查询多个云厂商时，必须为每个云厂商分别启动一个独立的 Agent 并行执行，而不是串行逐个查询。每个 Agent 负责一个云厂商的完整查询流程（list_products → get_document_toc → get_page_metadata → get_page_content），最后汇总所有 Agent 的结果。
 4. **list_products 结果可能过大**：阿里云等厂商的产品列表可能超过 token 限制，需分块读取或 grep 过滤。
+5. **get_document_toc 默认限制**：当不传 keyword 参数时，get_document_toc 默认只返回前 50 个页面。如需查看更多页面，请使用 keyword 参数过滤或调整 page/pageSize 参数。
 
 ## 工作模式
 
@@ -57,6 +59,15 @@ const server = new McpServer({
 - Agent 1：查询阿里云 ECS 价格（list_products → get_document_toc → 定位定价页面 → get_page_metadata → get_page_content）
 - Agent 2：查询腾讯云 CVM 价格（list_products → get_document_toc → 定位定价页面 → get_page_metadata → get_page_content）
 - 汇总两个 Agent 的结果进行对比
+
+### 子Agent 输出规范（重要）
+当启动子Agent 执行查询时，子Agent 必须遵守以下输出规范：
+
+1. **只返回结构化 JSON 数据**：最终输出应为 JSON 格式，包含查询结果和关键信息
+2. **禁止输出中间思考过程**：不要输出"让我整理一下"、"现在我有了足够的信息"等中间思考过程
+3. **禁止重复表格**：同一个数据表格只输出一次
+4. **输出格式**：返回 JSON 格式数据，包含 provider、product、priceInfo、source、note 等字段
+5. **工具调用次数限制**：每个子Agent 的工具调用次数应控制在 15 次以内。如果超过 15 次仍未获取到数据，应停止并报告失败原因
 
 ### 需要规划时使用 Plan 模式
 当任务涉及以下场景时，先调用 EnterPlanMode 进入规划模式：
@@ -93,11 +104,20 @@ const server = new McpServer({
 
 ### 价格查询流程（当用户询问价格时）
 
+**价格查询首选：get_product_price_quick（重要）**
+- 对于已知产品 ID 的场景（如 ECS/CVM/云电脑），**必须优先使用 get_product_price_quick**
+- get_product_price_quick 直接返回定价页面 URL 和价格信息，绕过完整的目录浏览流程
+- 使用 get_product_price_quick 可以将工具调用次数从 20+ 次减少到 2-3 次
+
 **价格查询三步法（重要）**：
-1. **先使用 get_product_price_quick**：对于已知产品 ID 的场景（如 ECS/CVM/云电脑），直接调用 get_product_price_quick 获取定价页面 URL，绕过完整的目录浏览流程
-2. **search_documents 搜索宽泛关键词**：调用 search_documents({ provider: "xxx", productId: "xxx", keyword: "价格" }) — **不要先遍历产品目录**，不要用"4C8G"等具体规格作为搜索词
-3. **搜索失败逐级放宽**：先搜"价格"，空则搜"计费"，再空则搜"规格"；不要反复用同类型的关键词
-4. **get_product_price 回退**：文档找不到价格时调用 get_product_price
+1. **第一步：get_product_price_quick** — 直接调用 get_product_price_quick({ provider: "xxx", productId: "xxx" }) 获取定价页面 URL
+2. **第二步：get_page_content** — 使用返回的 URL 调用 get_page_metadata → get_page_content 获取价格信息
+3. **第三步：get_product_price 回退** — 如果 get_product_price_quick 没有返回数据，调用 get_product_price
+
+**禁止行为**：
+- **严禁先遍历 list_products** — 价格查询不需要获取完整产品列表
+- **严禁先遍历 get_document_toc** — 直接使用 get_product_price_quick 即可
+- **严禁使用具体规格搜索** — 不要用"4C8G""4C 8G"等具体规格作为搜索词
 
 **不需要先 list_products 获取所有产品**：搜索价格时不需要遍历目录树，直接使用 get_product_price_quick 或 search_documents 搜索定价关键词即可。
 
@@ -107,19 +127,26 @@ const server = new McpServer({
 - AI 厂商（DeepSeek、MiniMax、Kimi、百炼）定价可通过 get_product_price 获取
 - 华为云等动态渲染的价格页面，WebFetch 无法抓取，应直接告知用户使用官网价格计算器
 - **价格数据来源已标注**：华为云的价格数据会标注来源（官网价格计算器或文档），便于区分标准定价和参考价
+- **火山引擎 ECS 价格**：文档明确说明"价格信息需要通过价格计算器查看"，文档中不直接显示价格，无需遍历目录寻找价格表
+- **百度云 BCC 价格**：文档引用外部定价页面（cloud.baidu.com/publicity/bccplus.html），文档内无具体价格数字
+- **联通云 ECS 价格**：文档只有按日单价（vCPU ¥55.89/核/日, 内存 ¥11.50/GB/日），没有包月/包年价格
 
-**ECS/CVM 4C8G 价格查询速查**：
+**ECS/CVM 4C8G 价格查询速查（必须按此顺序）**：
 
-| 厂商 | 获取方式 | 说明 |
-|------|---------|------|
-| 天翼云 | get_product_price_quick(provider="ctyun", productId="10027004") 或 search_documents → get_page_content | 文档含价格表 |
-| 火山引擎 | get_product_price_quick(provider="volcengine", productId="ECS") 或 get_product_price | GetTable API 返回完整定价表格 |
-| 腾讯云 | **直接使用 get_product_price(provider="tencent", productId="cvm")** | workbench API 返回全量 CVM 实例价格 |
-| 阿里云 | get_product_price_quick(provider="aliyun", productId="ecs") | 文档无价格表，需访问官网定价页 |
-| 华为云 | get_product_price(provider="huawei", productId="ecs") | 价格计算器 API 返回标准定价 |
-| 移动云 | search_documents(productId="706", keyword="价格") → get_page_content(hash) | 文档含价格信息 |
+| 厂商 | 首选方式 | 备选方式 | 说明 |
+|------|---------|---------|------|
+| 天翼云 | get_product_price(provider="ctyun", productId="10027004") | get_product_price_quick | 文档含价格表 |
+| 火山引擎 | get_product_price(provider="volcengine", productId="ECS") | get_product_price_quick | GetTable API 返回完整定价表格 |
+| 腾讯云 | **get_product_price(provider="tencent", productId="cvm")** | get_product_price_quick | workbench API 返回全量 CVM 实例价格 |
+| 阿里云 | get_product_price_quick(provider="aliyun", productId="ecs") | get_product_price | 文档无价格表，需访问官网定价页 |
+| 华为云 | get_product_price(provider="huawei", productId="ecs") | get_product_price_quick | 价格计算器 API 返回标准定价 |
+| 移动云 | get_product_price(provider="ecloud", productId="706") | search_documents | 文档含价格信息 |
+| 联通云 | get_product_price_quick(provider="cucloud", productId="128") | search_documents | 文档含按日单价 |
+| 百度云 | get_product_price_quick(provider="baidu", productId="bcc") | search_documents | 文档引用外部定价页 |
 
-**不要对 get_product_price 已覆盖的厂商额外搜索**：腾讯云 CVM 价格直接通过 get_product_price 获取，无需搜索文档目录。
+**必须使用 get_product_price 获取价格的厂商**：腾讯云、天翼云、火山引擎、华为云、阿里云（通过 get_product_price_quick 获取 URL 后访问）。
+
+**禁止行为**：不要对已覆盖的厂商额外搜索文档目录，直接使用 get_product_price 或 get_product_price_quick。
 
 ## 各厂商特殊说明
 
@@ -224,58 +251,73 @@ server.registerTool("list_products", {
         pageSize: z.number().optional().describe("每页条数，默认 100，最大 500"),
     }).strict(),
 }, async ({ provider, keyword, page, pageSize }) => {
-    const adapter = getAdapter(provider);
-    const keywords = keyword ? keyword.trim().split(/\s+/).filter(Boolean) : [];
-    const result = await adapter.listProducts({ keyword, page, pageSize });
-    let items;
-    let total;
-    let currentPage;
-    let currentPageSize;
-    let hasMore;
-    if ("items" in result) {
-        items = result.items;
-        total = result.total;
-        currentPage = result.page;
-        currentPageSize = result.pageSize;
-        hasMore = result.hasMore;
-    }
-    else {
-        items = result;
-        total = items.length;
-        currentPage = 1;
-        currentPageSize = pageSize || 100;
-        hasMore = false;
-    }
-    if (keywords.length > 0) {
-        const filtered = filterByKeywords(items, keywords);
+    try {
+        const adapter = getAdapter(provider);
+        const keywords = keyword ? keyword.trim().split(/\s+/).filter(Boolean) : [];
+        const result = await adapter.listProducts({ keyword, page, pageSize });
+        let items;
+        let total;
+        let currentPage;
+        let currentPageSize;
+        let hasMore;
+        if ("items" in result) {
+            items = result.items;
+            total = result.total;
+            currentPage = result.page;
+            currentPageSize = result.pageSize;
+            hasMore = result.hasMore;
+        }
+        else {
+            items = result;
+            total = items.length;
+            currentPage = 1;
+            currentPageSize = pageSize || 100;
+            hasMore = false;
+        }
+        if (keywords.length > 0) {
+            const filtered = filterByKeywords(items, keywords);
+            return {
+                content: [{
+                        type: "text",
+                        text: JSON.stringify({
+                            items: filtered,
+                            total: total,
+                            page: currentPage,
+                            pageSize: currentPageSize,
+                            hasMore: hasMore,
+                            message: filtered.length === 0
+                                ? `未找到匹配 "${keyword}" 的产品，请尝试更宽泛的关键词`
+                                : `共 ${total} 个产品，已过滤出 ${filtered.length} 个匹配 "${keyword}" 的产品`,
+                        }, null, 2),
+                    }],
+            };
+        }
         return {
             content: [{
                     type: "text",
                     text: JSON.stringify({
-                        items: filtered,
-                        total: total,
+                        items,
+                        total,
                         page: currentPage,
                         pageSize: currentPageSize,
-                        hasMore: hasMore,
-                        message: filtered.length === 0
-                            ? `未找到匹配 "${keyword}" 的产品，请尝试更宽泛的关键词`
-                            : `共 ${total} 个产品，已过滤出 ${filtered.length} 个匹配 "${keyword}" 的产品`,
+                        hasMore,
                     }, null, 2),
                 }],
         };
     }
-    return {
-        content: [{
-                type: "text",
-                text: JSON.stringify({
-                    items,
-                    total,
-                    page: currentPage,
-                    pageSize: currentPageSize,
-                    hasMore,
-                }, null, 2),
-            }],
-    };
+    catch (error) {
+        return {
+            content: [{
+                    type: "text",
+                    text: JSON.stringify({
+                        error: true,
+                        message: `查询失败: ${error instanceof Error ? error.message : String(error)}`,
+                        provider,
+                        suggestion: "请稍后重试，或检查网络连接",
+                    }, null, 2),
+                }],
+        };
+    }
 });
 server.registerTool("get_document_toc", {
     description: "获取指定产品的文档目录树。参数 productId 来自 list_products 返回的 productId。支持关键词过滤、分页和顶层目录模式",
@@ -284,65 +326,81 @@ server.registerTool("get_document_toc", {
         productId: z.string().describe("产品文档 ID"),
         keyword: z.string().optional().describe("精简关键词过滤（支持多个空格分隔，如 '价格 计费'），多个关键词用 AND 逻辑"),
         page: z.number().optional().describe("页码，默认 1"),
-        pageSize: z.number().optional().describe("每页条数，默认 200，最大 500"),
+        pageSize: z.number().optional().describe("每页条数，默认 50，最大 500"),
         topOnly: z.boolean().optional().describe("是否只返回顶层目录，默认 false"),
     }).strict(),
 }, async ({ provider, productId, keyword, page, pageSize, topOnly }) => {
-    const adapter = getAdapter(provider);
-    const keywords = keyword ? keyword.trim().split(/\s+/).filter(Boolean) : [];
-    const result = await adapter.getDocumentToc(productId, { keyword, page, pageSize, topOnly });
-    let items;
-    let total;
-    let currentPage;
-    let currentPageSize;
-    let hasMore;
-    if ("items" in result) {
-        items = result.items;
-        total = result.total;
-        currentPage = result.page;
-        currentPageSize = result.pageSize;
-        hasMore = result.hasMore;
-    }
-    else {
-        items = result;
-        total = items.length;
-        currentPage = 1;
-        currentPageSize = pageSize || 200;
-        hasMore = false;
-    }
-    if (topOnly) {
-        items = items.map(item => ({ pageId: item.pageId, title: item.title }));
-    }
-    if (keywords.length > 0) {
-        const filtered = filterByKeywords(items, keywords);
+    try {
+        const adapter = getAdapter(provider);
+        const keywords = keyword ? keyword.trim().split(/\s+/).filter(Boolean) : [];
+        const result = await adapter.getDocumentToc(productId, { keyword, page, pageSize, topOnly });
+        let items;
+        let total;
+        let currentPage;
+        let currentPageSize;
+        let hasMore;
+        if ("items" in result) {
+            items = result.items;
+            total = result.total;
+            currentPage = result.page;
+            currentPageSize = result.pageSize;
+            hasMore = result.hasMore;
+        }
+        else {
+            items = result;
+            total = items.length;
+            currentPage = 1;
+            currentPageSize = pageSize || 50;
+            hasMore = false;
+        }
+        if (topOnly) {
+            items = items.map(item => ({ pageId: item.pageId, title: item.title }));
+        }
+        if (keywords.length > 0) {
+            const filtered = filterByKeywords(items, keywords);
+            return {
+                content: [{
+                        type: "text",
+                        text: JSON.stringify({
+                            items: filtered,
+                            total: total,
+                            page: currentPage,
+                            pageSize: currentPageSize,
+                            hasMore: hasMore,
+                            message: filtered.length === 0
+                                ? `未找到匹配 "${keyword}" 的页面，请尝试更宽泛的关键词`
+                                : `共 ${total} 个页面，已过滤出 ${filtered.length} 个匹配 "${keyword}" 的页面`,
+                        }, null, 2),
+                    }],
+            };
+        }
         return {
             content: [{
                     type: "text",
                     text: JSON.stringify({
-                        items: filtered,
-                        total: total,
+                        items,
+                        total,
                         page: currentPage,
                         pageSize: currentPageSize,
-                        hasMore: hasMore,
-                        message: filtered.length === 0
-                            ? `未找到匹配 "${keyword}" 的页面，请尝试更宽泛的关键词`
-                            : `共 ${total} 个页面，已过滤出 ${filtered.length} 个匹配 "${keyword}" 的页面`,
+                        hasMore,
                     }, null, 2),
                 }],
         };
     }
-    return {
-        content: [{
-                type: "text",
-                text: JSON.stringify({
-                    items,
-                    total,
-                    page: currentPage,
-                    pageSize: currentPageSize,
-                    hasMore,
-                }, null, 2),
-            }],
-    };
+    catch (error) {
+        return {
+            content: [{
+                    type: "text",
+                    text: JSON.stringify({
+                        error: true,
+                        message: `查询失败: ${error instanceof Error ? error.message : String(error)}`,
+                        provider,
+                        productId,
+                        suggestion: "请稍后重试，或检查网络连接",
+                    }, null, 2),
+                }],
+        };
+    }
 });
 server.registerTool("search_documents", {
     description: "在指定云厂商的产品文档中按关键词搜索，返回匹配的页面列表。关键词支持多个空格分隔（AND 逻辑），建议使用精简关键词。当搜索结果为空时，系统会自动尝试去掉具体规格词（如 4C8G、5M）后重新搜索",
@@ -353,77 +411,98 @@ server.registerTool("search_documents", {
         query: z.string().optional().describe("搜索关键词（keyword 的别名，两者传一个即可）"),
     }).strict(),
 }, async ({ provider, productId, keyword, query }) => {
-    const adapter = getAdapter(provider);
     const searchKeyword = keyword || query || "";
-    if (!searchKeyword) {
-        return { content: [{ type: "text", text: "请提供搜索关键词（keyword 或 query 参数）" }] };
-    }
-    const keywords = searchKeyword.trim().split(/\s+/).filter(Boolean);
-    const results = await adapter.searchDocuments(productId, searchKeyword);
-    let filteredResults = results;
-    if (keywords.length > 1) {
-        filteredResults = results.filter(item => {
-            const text = (item.title + " " + (item.description || "")).toLowerCase();
-            return keywords.every(kw => text.includes(kw.toLowerCase()));
-        });
-    }
-    // 关键词自动扩展：当搜索结果为空时，尝试去掉具体规格词（如 4C8G、5M 等），保留核心词
-    if (filteredResults.length === 0 && keywords.length > 1) {
-        // 过滤掉看起来像具体规格的词（包含数字+字母组合、纯数字、具体配置描述）
-        const specPattern = /^[\d.]+[cCgGmMkKtTbB]*$|^\d+[cC]\d+[gG]$|^\d+Mbps$|^\d+M$/;
-        const coreKeywords = keywords.filter(kw => !specPattern.test(kw) && !/^\d+$/.test(kw));
-        if (coreKeywords.length > 0 && coreKeywords.length < keywords.length) {
-            const coreKeyword = coreKeywords.join(" ");
-            const coreResults = await adapter.searchDocuments(productId, coreKeyword);
-            if (coreResults.length > 0) {
-                return {
-                    content: [{
-                            type: "text",
-                            text: JSON.stringify({
-                                items: coreResults,
-                                total: coreResults.length,
-                                message: `原始关键词 "${searchKeyword}" 过于具体，已自动扩展为 "${coreKeyword}"，找到 ${coreResults.length} 个匹配页面。建议：使用宽泛关键词如"价格"、"计费"、"规格"等`,
-                                autoExpanded: true,
-                                originalKeyword: searchKeyword,
-                                expandedKeyword: coreKeyword,
-                            }, null, 2),
-                        }],
-                };
+    try {
+        const adapter = getAdapter(provider);
+        if (!searchKeyword) {
+            return { content: [{ type: "text", text: "请提供搜索关键词（keyword 或 query 参数）" }] };
+        }
+        const keywords = searchKeyword.trim().split(/\s+/).filter(Boolean);
+        const results = await adapter.searchDocuments(productId, searchKeyword);
+        let filteredResults = results;
+        if (keywords.length > 1) {
+            filteredResults = results.filter(item => {
+                const text = (item.title + " " + (item.description || "")).toLowerCase();
+                return keywords.every(kw => text.includes(kw.toLowerCase()));
+            });
+        }
+        // 关键词自动扩展：当搜索结果为空时，尝试去掉具体规格词（如 4C8G、5M 等），保留核心词
+        if (filteredResults.length === 0) {
+            // 过滤掉看起来像具体规格的词（包含数字+字母组合、纯数字、具体配置描述）
+            const specPattern = /^[\d.]+[cCgGmMkKtTbB]*$|^\d+[cC]\d+[gG]$|^\d+Mbps$|^\d+M$|^[\d.]+[gG][hH][zZ]$|^[\d.]+[cC][oO][rR][eE]$/;
+            const coreKeywords = keywords.filter(kw => !specPattern.test(kw) && !/^\d+$/.test(kw));
+            // 尝试多级自动扩展
+            const expansionAttempts = [];
+            // 第一级：去掉规格词后的核心词组合
+            if (coreKeywords.length > 0 && coreKeywords.length < keywords.length) {
+                expansionAttempts.push(coreKeywords.join(" "));
+            }
+            // 第二级：如果核心词有多个，尝试逐个使用
+            if (coreKeywords.length > 1) {
+                expansionAttempts.push(coreKeywords[0]);
+            }
+            else if (coreKeywords.length > 0 && coreKeywords.length === keywords.length) {
+                // 所有词都不是规格词但结果为空，尝试只用第一个词
+                expansionAttempts.push(coreKeywords[0]);
+            }
+            // 第三级：尝试常用宽泛词
+            if (keywords.some(kw => /价|计费|定价|收费|规格|配置|套餐|费用/i.test(kw))) {
+                // 已经包含宽泛词，不需要再尝试
+            }
+            else if (expansionAttempts.length === 0) {
+                // 所有词都是规格词，直接尝试常用宽泛词
+                const broadKeywords = ["价格", "计费", "规格"];
+                for (const broadKw of broadKeywords) {
+                    expansionAttempts.push(broadKw);
+                }
+            }
+            for (const attemptKeyword of expansionAttempts) {
+                const attemptResults = await adapter.searchDocuments(productId, attemptKeyword);
+                if (attemptResults.length > 0) {
+                    return {
+                        content: [{
+                                type: "text",
+                                text: JSON.stringify({
+                                    items: attemptResults,
+                                    total: attemptResults.length,
+                                    message: `原始关键词 "${searchKeyword}" 过于具体，已自动扩展为 "${attemptKeyword}"，找到 ${attemptResults.length} 个匹配页面。建议：使用宽泛关键词如"价格"、"计费"、"规格"等`,
+                                    autoExpanded: true,
+                                    originalKeyword: searchKeyword,
+                                    expandedKeyword: attemptKeyword,
+                                }, null, 2),
+                            }],
+                    };
+                }
             }
         }
-        // 如果核心词仍然为空，尝试只使用第一个非数字词
-        const firstWord = keywords.find(kw => !/^\d+$/.test(kw) && !specPattern.test(kw));
-        if (firstWord) {
-            const fallbackResults = await adapter.searchDocuments(productId, firstWord);
-            if (fallbackResults.length > 0) {
-                return {
-                    content: [{
-                            type: "text",
-                            text: JSON.stringify({
-                                items: fallbackResults,
-                                total: fallbackResults.length,
-                                message: `原始关键词 "${searchKeyword}" 过于具体，已自动扩展为 "${firstWord}"，找到 ${fallbackResults.length} 个匹配页面。建议：使用宽泛关键词如"价格"、"计费"、"规格"等`,
-                                autoExpanded: true,
-                                originalKeyword: searchKeyword,
-                                expandedKeyword: firstWord,
-                            }, null, 2),
-                        }],
-                };
-            }
-        }
+        return {
+            content: [{
+                    type: "text",
+                    text: JSON.stringify({
+                        items: filteredResults,
+                        total: filteredResults.length,
+                        message: filteredResults.length === 0
+                            ? `未找到同时匹配 "${searchKeyword}" 的页面。建议：使用更宽泛的关键词，如"价格"、"计费"、"规格"、"配置"等，不要使用"4C8G"等具体规格组合`
+                            : `找到 ${filteredResults.length} 个匹配的页面`,
+                    }, null, 2),
+                }],
+        };
     }
-    return {
-        content: [{
-                type: "text",
-                text: JSON.stringify({
-                    items: filteredResults,
-                    total: filteredResults.length,
-                    message: filteredResults.length === 0
-                        ? `未找到同时匹配 "${searchKeyword}" 的页面。建议：使用更宽泛的关键词，如"价格"、"计费"、"规格"、"配置"等，不要使用"4C8G"等具体规格组合`
-                        : `找到 ${filteredResults.length} 个匹配的页面`,
-                }, null, 2),
-            }],
-    };
+    catch (error) {
+        return {
+            content: [{
+                    type: "text",
+                    text: JSON.stringify({
+                        error: true,
+                        message: `搜索失败: ${error instanceof Error ? error.message : String(error)}`,
+                        provider,
+                        productId,
+                        keyword: searchKeyword,
+                        suggestion: "请稍后重试，或尝试使用更宽泛的关键词",
+                    }, null, 2),
+                }],
+        };
+    }
 });
 server.registerTool("get_page_metadata", {
     description: "获取文档页面的元信息，包括标题和 contentPath。参数 pageId 来自 get_document_toc 或 search_documents",
@@ -432,39 +511,55 @@ server.registerTool("get_page_metadata", {
         pageId: z.string().describe("文档页面 ID"),
     }).strict(),
 }, async ({ provider, pageId }) => {
-    const adapter = getAdapter(provider);
-    const metadata = await adapter.getPageMetadata(pageId);
-    // 统一 contentPath 格式：确保返回的 contentPath 是完整可访问的 URL
-    // 对于返回相对路径的适配器，补全为完整 URL
-    if (metadata.contentPath && !metadata.contentPath.startsWith("http")) {
-        // 火山引擎的 contentPath 是 "productId/docId" 格式，通过 API 获取，不需要补全
-        // 移动云的 contentPath 是 hash 字符串，直接传给 get_page_content 即可
-        // 其他相对路径需要补全
-        if (provider === "volcengine" || provider === "ecloud") {
-            // 这些厂商的 contentPath 是特殊格式，不需要补全
-        }
-        else if (metadata.contentPath.startsWith("/")) {
-            // 相对路径，补全为完整 URL
-            const baseUrls = {
-                "aliyun": "https://help.aliyun.com",
-                "bailian": "https://help.aliyun.com",
-                "tencent": "https://cloud.tencent.com",
-                "huawei": "https://support.huaweicloud.com",
-                "ctyun": "https://www.ctyun.cn",
-                "baidu": "https://cloud.baidu.com",
-                "deepseek": "https://api-docs.deepseek.com",
-                "glm": "https://docs.bigmodel.cn",
-                "minimax": "https://platform.minimaxi.com",
-                "kimi": "https://platform.kimi.com",
-                "cucloud": "https://support.cucloud.cn",
-            };
-            const baseUrl = baseUrls[provider];
-            if (baseUrl) {
-                metadata.contentPath = `${baseUrl}${metadata.contentPath}`;
+    try {
+        const adapter = getAdapter(provider);
+        const metadata = await adapter.getPageMetadata(pageId);
+        // 统一 contentPath 格式：确保返回的 contentPath 是完整可访问的 URL
+        // 对于返回相对路径的适配器，补全为完整 URL
+        if (metadata.contentPath && !metadata.contentPath.startsWith("http")) {
+            // 火山引擎的 contentPath 是 "productId/docId" 格式，通过 API 获取，不需要补全
+            // 移动云的 contentPath 是 hash 字符串，直接传给 get_page_content 即可
+            // 其他相对路径需要补全
+            if (provider === "volcengine" || provider === "ecloud") {
+                // 这些厂商的 contentPath 是特殊格式，不需要补全
+            }
+            else if (metadata.contentPath.startsWith("/")) {
+                // 相对路径，补全为完整 URL
+                const baseUrls = {
+                    "aliyun": "https://help.aliyun.com",
+                    "bailian": "https://help.aliyun.com",
+                    "tencent": "https://cloud.tencent.com",
+                    "huawei": "https://support.huaweicloud.com",
+                    "ctyun": "https://www.ctyun.cn",
+                    "baidu": "https://cloud.baidu.com",
+                    "deepseek": "https://api-docs.deepseek.com",
+                    "glm": "https://docs.bigmodel.cn",
+                    "minimax": "https://platform.minimaxi.com",
+                    "kimi": "https://platform.kimi.com",
+                    "cucloud": "https://support.cucloud.cn",
+                };
+                const baseUrl = baseUrls[provider];
+                if (baseUrl) {
+                    metadata.contentPath = `${baseUrl}${metadata.contentPath}`;
+                }
             }
         }
+        return { content: [{ type: "text", text: JSON.stringify(metadata, null, 2) }] };
     }
-    return { content: [{ type: "text", text: JSON.stringify(metadata, null, 2) }] };
+    catch (error) {
+        return {
+            content: [{
+                    type: "text",
+                    text: JSON.stringify({
+                        error: true,
+                        message: `获取页面元信息失败: ${error instanceof Error ? error.message : String(error)}`,
+                        provider,
+                        pageId,
+                        suggestion: "请稍后重试，或检查 pageId 是否正确",
+                    }, null, 2),
+                }],
+        };
+    }
 });
 server.registerTool("get_product_price", {
     description: "获取指定云厂商的产品价格信息。不传 productId 则返回所有产品价格概览。支持精确价格的厂商：腾讯云 CVM（productId 传 \"cvm\" 或 \"213\"）、天翼云云电脑（productId 传 \"10027004\"）、AI 厂商（DeepSeek、MiniMax、Kimi、百炼）。阿里云、华为云文档不含精确价格，需使用官网价格计算器。如需快速获取定价页面 URL，请使用 get_product_price_quick 工具",
@@ -473,9 +568,25 @@ server.registerTool("get_product_price", {
         productId: z.string().optional().describe("产品 ID（可选，不传则返回所有产品价格概览）。腾讯云传 \"cvm\" 或 \"213\"，天翼云传 \"10027004\"（云电脑）或 \"11061839\"（Token 服务）"),
     }).strict(),
 }, async ({ provider, productId }) => {
-    const adapter = getAdapter(provider);
-    const result = await adapter.getProductPrice(productId);
-    return { content: [{ type: "text", text: JSON.stringify(result, null, 2) }] };
+    try {
+        const adapter = getAdapter(provider);
+        const result = await adapter.getProductPrice(productId);
+        return { content: [{ type: "text", text: JSON.stringify(result, null, 2) }] };
+    }
+    catch (error) {
+        return {
+            content: [{
+                    type: "text",
+                    text: JSON.stringify({
+                        error: true,
+                        message: `获取价格失败: ${error instanceof Error ? error.message : String(error)}`,
+                        provider,
+                        productId,
+                        suggestion: "请稍后重试，或使用 get_product_price_quick 获取定价页面 URL",
+                    }, null, 2),
+                }],
+        };
+    }
 });
 server.registerTool("get_product_price_quick", {
     description: "【快捷定价查询】直接返回已知的定价页面 URL 和价格信息，绕过完整的目录浏览流程，大幅减少工具调用次数。适用于已知产品 ID 的场景（如 ECS/CVM/云电脑等）。支持的 provider 和 productId 见 get_product_price",
@@ -484,81 +595,101 @@ server.registerTool("get_product_price_quick", {
         productId: z.string().optional().describe("产品 ID（可选）"),
     }).strict(),
 }, async ({ provider, productId }) => {
-    // 已知的定价页面速查表
-    const priceQuickMap = {
-        "ctyun": {
-            "10027004": [{ url: "https://www.ctyun.cn/document/10027004", description: "天翼云电脑（政企版）价格" }],
-            "10026730": [{ url: "https://www.ctyun.cn/document/10026730", description: "弹性云主机 ECS 价格" }],
-            "11061839": [{ url: "https://www.ctyun.cn/document/11061839", description: "Token 服务价格" }],
-        },
-        "aliyun": {
-            "ecs": [{ url: "https://help.aliyun.com/zh/ecs/billing", description: "云服务器 ECS 计费说明（文档中无具体价格表，需访问 aliyun.com/price）" }],
-        },
-        "tencent": {
-            "cvm": [{ url: "https://buy.cloud.tencent.com/price/cvm/overview", description: "云服务器 CVM 价格概览" }],
-            "213": [{ url: "https://buy.cloud.tencent.com/price/cvm/overview", description: "云服务器 CVM 价格概览" }],
-        },
-        "huawei": {
-            "ecs": [{ url: "https://www.huaweicloud.com/pricing/calculator.html#/ecs", description: "弹性云服务器 ECS 价格计算器" }],
-            "maas": [{ url: "https://support.huaweicloud.com/price-maas/price-maas-0002.html", description: "MaaS 模型即服务价格" }],
-        },
-        "ecloud": {
-            "706": [{ url: "https://ecloud.10086.cn/op-help-center/doc/category/706", description: "云主机 ECS 价格" }],
-        },
-        "volcengine": {
-            "ECS": [{ url: "https://www.volcengine.com/pricing?product=ECS", description: "ECS 价格" }],
-        },
-        "deepseek": {
-            "api-docs": [{ url: "https://api-docs.deepseek.com/quick_start/pricing", description: "DeepSeek API 定价" }],
-        },
-        "minimax": {
-            "minimax-api": [{ url: "https://platform.minimaxi.com/docs/guides/pricing-paygo", description: "MiniMax 定价" }],
-        },
-        "kimi": {
-            "kimi-api": [{ url: "https://platform.kimi.com/docs/pricing", description: "Kimi API 定价" }],
-        },
-        "bailian": {
-            "model-studio": [{ url: "https://help.aliyun.com/zh/model-studio/billing", description: "百炼大模型服务平台计费说明" }],
-        },
-        "baidu": {
-            "BML": [{ url: "https://cloud.baidu.com/doc/BML/s/9kq7tfy4p", description: "BML 全功能AI开发平台价格" }],
-        },
-        "glm": {
-            "bigmodel": [{ url: "https://open.bigmodel.cn/pricing", description: "智谱 GLM 定价" }],
-        },
-    };
-    const providerMap = priceQuickMap[provider];
-    if (!providerMap) {
-        // 没有速查数据，回退到 get_product_price
-        const adapter = getAdapter(provider);
-        const result = await adapter.getProductPrice(productId);
-        return { content: [{ type: "text", text: JSON.stringify(result, null, 2) }] };
-    }
-    if (productId && providerMap[productId]) {
+    try {
+        // 已知的定价页面速查表
+        const priceQuickMap = {
+            "ctyun": {
+                "10027004": [{ url: "https://www.ctyun.cn/document/10027004", description: "天翼云电脑（政企版）价格" }],
+                "10026730": [{ url: "https://www.ctyun.cn/document/10026730", description: "弹性云主机 ECS 价格" }],
+                "11061839": [{ url: "https://www.ctyun.cn/document/11061839", description: "Token 服务价格" }],
+            },
+            "aliyun": {
+                "ecs": [{ url: "https://help.aliyun.com/zh/ecs/billing", description: "云服务器 ECS 计费说明（文档中无具体价格表，需访问 aliyun.com/price）" }],
+            },
+            "tencent": {
+                "cvm": [{ url: "https://buy.cloud.tencent.com/price/cvm/overview", description: "云服务器 CVM 价格概览" }],
+                "213": [{ url: "https://buy.cloud.tencent.com/price/cvm/overview", description: "云服务器 CVM 价格概览" }],
+            },
+            "huawei": {
+                "ecs": [{ url: "https://www.huaweicloud.com/pricing/calculator.html#/ecs", description: "弹性云服务器 ECS 价格计算器" }],
+                "maas": [{ url: "https://support.huaweicloud.com/price-maas/price-maas-0002.html", description: "MaaS 模型即服务价格" }],
+            },
+            "ecloud": {
+                "706": [{ url: "https://ecloud.10086.cn/op-help-center/doc/category/706", description: "云主机 ECS 价格" }],
+            },
+            "volcengine": {
+                "ECS": [{ url: "https://www.volcengine.com/pricing?product=ECS", description: "ECS 价格" }],
+            },
+            "deepseek": {
+                "api-docs": [{ url: "https://api-docs.deepseek.com/quick_start/pricing", description: "DeepSeek API 定价" }],
+            },
+            "minimax": {
+                "minimax-api": [{ url: "https://platform.minimaxi.com/docs/guides/pricing-paygo", description: "MiniMax 定价" }],
+            },
+            "kimi": {
+                "kimi-api": [{ url: "https://platform.kimi.com/docs/pricing", description: "Kimi API 定价" }],
+            },
+            "bailian": {
+                "model-studio": [{ url: "https://help.aliyun.com/zh/model-studio/billing", description: "百炼大模型服务平台计费说明" }],
+            },
+            "baidu": {
+                "BML": [{ url: "https://cloud.baidu.com/doc/BML/s/9kq7tfy4p", description: "BML 全功能AI开发平台价格" }],
+            },
+            "glm": {
+                "bigmodel": [{ url: "https://open.bigmodel.cn/pricing", description: "智谱 GLM 定价" }],
+            },
+            "cucloud": {
+                "128": [{ url: "https://support.cucloud.cn/document/128", description: "云服务器 ECS 价格" }],
+                "2357": [{ url: "https://support.cucloud.cn/document/2357", description: "AI服务平台 AISP 价格" }],
+            },
+        };
+        const providerMap = priceQuickMap[provider];
+        if (!providerMap) {
+            // 没有速查数据，回退到 get_product_price
+            const adapter = getAdapter(provider);
+            const result = await adapter.getProductPrice(productId);
+            return { content: [{ type: "text", text: JSON.stringify(result, null, 2) }] };
+        }
+        if (productId && providerMap[productId]) {
+            return {
+                content: [{
+                        type: "text",
+                        text: JSON.stringify({
+                            provider,
+                            productId,
+                            quickLinks: providerMap[productId],
+                            message: "以上为已知的定价页面 URL，可直接通过 get_page_metadata + get_page_content 获取价格信息，或使用 get_product_price 获取结构化价格数据",
+                        }, null, 2),
+                    }],
+            };
+        }
+        // 没有匹配的 productId，返回所有已知的定价页面
+        const allLinks = Object.entries(providerMap).flatMap(([pid, links]) => links.map(l => ({ productId: pid, ...l })));
         return {
             content: [{
                     type: "text",
                     text: JSON.stringify({
                         provider,
-                        productId,
-                        quickLinks: providerMap[productId],
-                        message: "以上为已知的定价页面 URL，可直接通过 get_page_metadata + get_page_content 获取价格信息，或使用 get_product_price 获取结构化价格数据",
+                        quickLinks: allLinks,
+                        message: "以上为已知的定价页面 URL。如需查询具体产品价格，请指定 productId 参数",
                     }, null, 2),
                 }],
         };
     }
-    // 没有匹配的 productId，返回所有已知的定价页面
-    const allLinks = Object.entries(providerMap).flatMap(([pid, links]) => links.map(l => ({ productId: pid, ...l })));
-    return {
-        content: [{
-                type: "text",
-                text: JSON.stringify({
-                    provider,
-                    quickLinks: allLinks,
-                    message: "以上为已知的定价页面 URL。如需查询具体产品价格，请指定 productId 参数",
-                }, null, 2),
-            }],
-    };
+    catch (error) {
+        return {
+            content: [{
+                    type: "text",
+                    text: JSON.stringify({
+                        error: true,
+                        message: `获取定价页面失败: ${error instanceof Error ? error.message : String(error)}`,
+                        provider,
+                        productId,
+                        suggestion: "请稍后重试，或直接访问官网定价页面",
+                    }, null, 2),
+                }],
+        };
+    }
 });
 server.registerTool("get_page_content", {
     description: "获取文档页面的完整 Markdown 正文。参数 contentPath 来自 get_page_metadata 返回的 contentPath",
@@ -567,12 +698,46 @@ server.registerTool("get_page_content", {
         contentPath: z.string().describe("文档正文 URL"),
     }).strict(),
 }, async ({ provider, contentPath }) => {
-    const adapter = getAdapter(provider);
-    const content = await adapter.getPageContent(contentPath);
-    return { content: [{ type: "text", text: content }] };
+    try {
+        const adapter = getAdapter(provider);
+        const content = await adapter.getPageContent(contentPath);
+        return { content: [{ type: "text", text: content }] };
+    }
+    catch (error) {
+        return {
+            content: [{
+                    type: "text",
+                    text: JSON.stringify({
+                        error: true,
+                        message: `获取文档内容失败: ${error instanceof Error ? error.message : String(error)}`,
+                        provider,
+                        contentPath,
+                        suggestion: "请稍后重试，或检查 contentPath 是否正确",
+                    }, null, 2),
+                }],
+        };
+    }
 });
 export async function main() {
     const transport = new StdioServerTransport();
+    // 优雅关闭：处理进程退出信号
+    const shutdown = async (signal) => {
+        console.error(`[multi-cloud-docs-search] 收到 ${signal} 信号，正在关闭...`);
+        process.exit(0);
+    };
+    process.on("SIGINT", () => shutdown("SIGINT"));
+    process.on("SIGTERM", () => shutdown("SIGTERM"));
+    // 未捕获异常处理：记录错误但不退出进程
+    process.on("uncaughtException", (err) => {
+        console.error(`[multi-cloud-docs-search] 未捕获异常: ${err.message}`);
+    });
+    process.on("unhandledRejection", (reason) => {
+        console.error(`[multi-cloud-docs-search] 未处理的 Promise 拒绝: ${reason}`);
+    });
     await server.connect(transport);
+    console.error("[multi-cloud-docs-search] MCP Server 已启动 (stdio 模式)");
 }
-main().catch(console.error);
+main().catch((err) => {
+    console.error(`[multi-cloud-docs-search] 启动失败: ${err.message}`);
+    process.exit(1);
+});

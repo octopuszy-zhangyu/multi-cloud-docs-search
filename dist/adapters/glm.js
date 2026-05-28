@@ -267,48 +267,48 @@ export class GlmAdapter extends CloudDocAdapter {
         return prices;
     }
     async getProductPrice(productId) {
-        // GLM 价格页面是 SPA，需要从 llms-full.txt 中查找定价相关内容
-        const fullContent = await this.getLlmsFullContent();
-        // 查找包含 "pricing" 或 "价格" 的页面
-        const pricingMatch = fullContent.match(/Source:\s*.*pricing.*\n\n([\s\S]*?)(?=\n^#\s|\n^Source:\s|\z)/m);
-        let prices = [];
-        let source = "https://open.bigmodel.cn/pricing";
-        if (pricingMatch) {
-            const pricingContent = pricingMatch[1];
-            prices = this.parsePriceTable(pricingContent);
-        }
-        // 如果没有找到，尝试从 HTML 页面提取
-        if (prices.length === 0) {
-            const html = await this.fetchHtml("https://open.bigmodel.cn/pricing");
-            const $ = cheerio.load(html);
-            // 尝试从页面中提取价格数据
-            const priceElements = $("[class*='price'], [class*='Pricing'], [data-price]").text();
-            if (priceElements) {
-                // 从页面文本中解析价格
-                const priceRegex = /([一-龥a-zA-Z0-9\s]+?)[:：]\s*([0-9.]+)\s*(元|美元|\$)/g;
-                let match;
-                while ((match = priceRegex.exec(priceElements)) !== null) {
-                    const productName = match[1].trim();
-                    const price = parseFloat(match[2]);
-                    const currency = match[3].includes("$") || match[3].includes("美元") ? "USD" : "CNY";
-                    prices.push({
-                        productName,
-                        specification: "",
-                        billingMode: "按量",
-                        price,
-                        unit: "元/百万Token",
-                        currency,
-                        source: "定价页面",
-                    });
+        // 先尝试从 llms-full.txt 中查找定价相关内容
+        try {
+            const fullContent = await this.getLlmsFullContent();
+            // 查找包含 "pricing" 或 "价格" 的页面内容
+            const lines = fullContent.split("\n");
+            let inPricingSection = false;
+            let pricingContent = "";
+            for (const line of lines) {
+                if (line.toLowerCase().includes("pricing") || line.includes("价格")) {
+                    inPricingSection = true;
+                }
+                if (inPricingSection) {
+                    pricingContent += line + "\n";
+                    // 如果遇到下一个 Source 行，停止收集
+                    if (line.startsWith("Source:") && pricingContent.length > 100) {
+                        break;
+                    }
+                }
+            }
+            if (pricingContent.length > 50) {
+                const prices = this.parsePriceTable(pricingContent);
+                if (prices.length > 0) {
+                    return {
+                        provider: this.provider,
+                        name: this.name,
+                        prices,
+                        source: "https://open.bigmodel.cn/pricing",
+                    };
                 }
             }
         }
+        catch {
+            // 继续尝试其他方式
+        }
+        // 回退：返回提示信息
         return {
             provider: this.provider,
             name: this.name,
-            prices,
-            source,
-            updateDate: undefined,
+            prices: [],
+            source: "https://open.bigmodel.cn/pricing",
+            message: "智谱 GLM 定价页面（open.bigmodel.cn/pricing）为 JS 动态渲染的 SPA，无法通过普通 HTTP 请求抓取。建议直接访问 https://open.bigmodel.cn/pricing 查看最新价格。如需程序化获取，可尝试通过 get_page_content 获取定价相关文档页面。",
+            note: "定价页面为 SPA，需浏览器渲染，无法直接抓取",
         };
     }
 }
