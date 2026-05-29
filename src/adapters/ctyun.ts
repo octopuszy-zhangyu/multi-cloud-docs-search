@@ -5,12 +5,21 @@ import type {
   PageMetadataResponse,
 } from "../types.js";
 import { CloudDocAdapter, type Product, type TocItem, type SearchResult, type PageMetadata, type PriceItem, type PriceResult, type PaginatedResult, type ListProductsOptions, type TocOptions, type PriceQueryOptions } from "./base.js";
+import { htmlToMarkdown } from "../utils/html-to-md.js";
 
 const BASE_URL = "https://www.ctyun.cn";
 
 export class CtyunAdapter extends CloudDocAdapter {
   readonly provider = "ctyun";
   readonly name = "天翼云";
+
+  // 价格 API 缓存
+  private ctTgcCache: string | null = null;
+  private cookieExpiry: number = 0;
+  private regionCache: Array<{ id: string; name: string }> | null = null;
+  private regionExpiry: number = 0;
+  private flavorMapCache: Map<string, { spec_name: string; cpu: number; mem: number; flavor_uuid: string; flavorType: string; cpuinfo: string }> | null = null;
+  private flavorExpiry: number = 0;
 
   async listProducts(options?: ListProductsOptions): Promise<PaginatedResult<Product>> {
     const url = `${BASE_URL}/v2/portal/book/ListForHelp?bookClassDomain=product&_t=${Date.now()}`;
@@ -107,12 +116,119 @@ export class CtyunAdapter extends CloudDocAdapter {
       ? contentType.split("charset=")[1].split(";")[0].trim().toLowerCase()
       : "utf-8";
 
+    let html: string;
     try {
-      return new TextDecoder(encoding === "gbk" || encoding === "gb2312" || encoding === "gb18030" ? "gbk" : encoding).decode(bytes);
+      html = new TextDecoder(encoding === "gbk" || encoding === "gb2312" || encoding === "gb18030" ? "gbk" : encoding).decode(bytes);
     } catch {
       // 如果指定编码不支持，回退到 utf-8
-      return decoder.decode(bytes);
+      html = decoder.decode(bytes);
     }
+
+    // 将 HTML 转换为 Markdown
+    return htmlToMarkdown(html);
+  }
+
+  // ========== 价格 API 辅助方法 ==========
+
+  /**
+   * 获取天翼云 ct_tgc cookie
+   * 调用 GetTree API 获取 cookie，缓存到类变量中（5 分钟有效期）
+   */
+  private async getCtyunCookie(): Promise<string> {
+    if (this.ctTgcCache && Date.now() < this.cookieExpiry) {
+      return this.ctTgcCache;
+    }
+    const url = `${BASE_URL}/v1/portal/menu/GetTree?domain=portal.header-left-menu&topic=portal&qryMode=reduce`;
+    const res = await this.fetchWithRetry(url, {
+      headers: {
+        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36",
+        "Referer": `${BASE_URL}/pricing/ecs`,
+      },
+    });
+    const setCookie = res.headers.get("set-cookie") || "";
+    const match = setCookie.match(/ct_tgc=([^;]+)/);
+    if (!match) {
+      throw new Error("获取天翼云 cookie 失败：响应中未包含 ct_tgc");
+    }
+    this.ctTgcCache = match[1];
+    this.cookieExpiry = Date.now() + 5 * 60 * 1000;
+    return this.ctTgcCache!;
+  }
+
+  /**
+   * 获取天翼云可用地域列表
+   */
+  private async getRegionList(): Promise<Array<{ id: string; name: string }>> {
+    if (this.regionCache && Date.now() < this.regionExpiry) {
+      return this.regionCache;
+    }
+    const cookie = await this.getCtyunCookie();
+    const url = `${BASE_URL}/v2/portal/region/regionList?productId=10000000`;
+    const res = await this.fetchWithRetry(url, {
+      headers: {
+        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36",
+        "Referer": `${BASE_URL}/pricing/ecs`,
+        "Accept": "application/json",
+        "Cookie": `ct_tgc=${cookie}`,
+      },
+    });
+    const raw = await res.json() as { code: string; data: Array<{ regionId: string; regionName: string }> };
+    const regions = (raw.data || []).map(r => ({ id: r.regionId, name: r.regionName }));
+    this.regionCache = regions;
+    this.regionExpiry = Date.now() + 5 * 60 * 1000;
+    return regions;
+  }
+
+  /**
+   * 获取规格 UUID 映射
+   * 从价格计算器页面低代码配置 JSON 中解析所有规格的 flavor_uuid
+   */
+  private async getFlavorMap(): Promise<Map<string, { spec_name: string; cpu: number; mem: number; flavor_uuid: string; flavorType: string; cpuinfo: string }>> {
+    if (this.flavorMapCache && Date.now() < this.flavorExpiry) {
+      return this.flavorMapCache;
+    }
+    const configUrl = "https://ctyun-nest-prod.gdoss.xstore.ctyun.cn/static/lowcode/page/56/622ecc9e036f47a4ab63fa764abe21dd.json";
+    const res = await this.fetchWithRetry(configUrl, {
+      headers: {
+        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36",
+        "Accept": "application/json",
+      },
+    });
+    const config = await res.json() as any;
+    const map = new Map<string, { spec_name: string; cpu: number; mem: number; flavor_uuid: string; flavorType: string; cpuinfo: string }>();
+
+    // 从低代码配置 JSON 中递归查找 flavor 数据
+    const extractFlavors = (obj: any): void => {
+      if (!obj || typeof obj !== 'object') return;
+      if (Array.isArray(obj)) {
+        obj.forEach(extractFlavors);
+        return;
+      }
+      // 查找包含 flavorData 的数据源
+      if (obj.id === "flavorData" && Array.isArray(obj.data)) {
+        for (const item of obj.data) {
+          if (item.flavor_uuid) {
+            map.set(item.flavor_uuid, {
+              spec_name: item.spec_name || "",
+              cpu: item.cpu || 0,
+              mem: item.mem || 0,
+              flavor_uuid: item.flavor_uuid,
+              flavorType: item.flavorType || "",
+              cpuinfo: item.cpuinfo || "x86",
+            });
+          }
+        }
+        return;
+      }
+      for (const key of Object.keys(obj)) {
+        extractFlavors(obj[key]);
+      }
+    };
+    extractFlavors(config);
+
+    this.flavorMapCache = map;
+    this.flavorExpiry = Date.now() + 5 * 60 * 1000;
+    return map;
   }
 
   /** 清理字符串中的 HTML 标签和特殊字符 */
@@ -212,9 +328,12 @@ export class CtyunAdapter extends CloudDocAdapter {
   /**
    * 获取产品价格信息
    *
-   * 通过搜索产品文档中的"价格"、"计费"相关页面，
-   * 获取页面内容并解析价格表格。
-   * 当文档中只有组件单价（CPU、内存单价）时，自动计算常见规格的总价。
+   * 对于 ECS（productId=10026730）：
+   * 1. 从价格总览页面解析 CPU 单价（元/核/月）和内存单价（元/G/月）
+   * 2. 基于单价自动计算常见规格（2C4G、4C8G 等）的包月和按需价格
+   *
+   * 对于云电脑（productId=10027004）：
+   * 文档中已有完整价格表，通过 parsePriceTable 直接解析
    */
   async getProductPrice(productId?: string, _options?: PriceQueryOptions): Promise<PriceResult> {
     const result: PriceResult = {
@@ -243,7 +362,7 @@ export class CtyunAdapter extends CloudDocAdapter {
         return true;
       });
 
-      // 优先选择标题包含"价格"或"计费"的页面
+      // 优先选择标题包含"价格"、"计费"、"定价"的页面
       const priorityPages = uniquePages.filter(
         (p) =>
           p.title.includes("价格") ||
@@ -259,47 +378,29 @@ export class CtyunAdapter extends CloudDocAdapter {
           const metadata = await this.getPageMetadata(page.pageId);
           if (!metadata.contentPath) continue;
 
-          // 获取页面 HTML 内容
-          const html = await this.getPageContent(metadata.contentPath);
-          const $ = cheerio.load(html);
+          const markdown = await this.getPageContent(metadata.contentPath);
 
-          // 提取表格并转换为 Markdown 表格格式
-          $("table").each((_, table) => {
-            const rows: string[] = [];
-            $(table)
-              .find("tr")
-              .each((_, tr) => {
-                const cells: string[] = [];
-                $(tr)
-                  .find("th, td")
-                  .each((_, cell) => {
-                    cells.push($(cell).text().trim().replace(/\s+/g, " "));
-                  });
-                if (cells.length > 0) {
-                  rows.push("| " + cells.join(" | ") + " |");
-                }
-              });
+          // 先尝试解析完整价格表
+          const parsed = this.parsePriceTable(markdown, metadata.contentPath);
+          if (parsed.length > 0) {
+            result.prices.push(...parsed);
+          }
 
-            if (rows.length > 1) {
-              const headerCells = rows[0].split("|").filter((_, i, arr) => i > 0 && i < arr.length - 1);
-              const separator = "| " + headerCells.map(() => "---").join(" | ") + " |";
-              rows.splice(1, 0, separator);
-              const tableMd = rows.join("\n");
-              const parsed = this.parsePriceTable(tableMd, metadata.contentPath);
-              result.prices.push(...parsed);
-            }
-          });
+          // 尝试解析组件单价（CPU 元/核/月、内存元/G/月）
+          const unitPrices = this.parseUnitPrices(markdown, metadata.contentPath);
+          if (unitPrices.length > 0) {
+            result.prices.push(...unitPrices);
+          }
         } catch {
-          // 跳过解析失败的页面
           continue;
         }
       }
 
-      // 自动计算常见规格总价（当文档只有组件单价时）
+      // 从组件单价推算常见规格价格
       result.prices.push(...this.calculateCommonSpecs(result.prices, result.source));
 
       // 标记数据状态
-      if (result.prices.length > 0 && result.prices[0].price > 0) {
+      if (result.prices.length > 0 && result.prices.some((p) => p.price > 0)) {
         result.dataStatus = "complete";
       } else if (result.prices.length > 0 && result.prices[0].price === 0) {
         result.dataStatus = "no_price";
@@ -309,11 +410,84 @@ export class CtyunAdapter extends CloudDocAdapter {
         result.note = "天翼云定价页面为 JavaScript 动态渲染，文档中无法获取完整价格数据。如需实时价格，请访问天翼云官网价格计算器：https://www.ctyun.cn/price";
       }
     } catch {
-      // 如果搜索失败，返回空结果
       result.dataStatus = "no_data";
     }
 
     return result;
+  }
+
+  /**
+   * 解析组件单价（CPU 单价、内存单价）
+   *
+   * 天翼云价格总览页面的格式：
+   * 产品名称  包月标准价格（元/核/月） 按需标准价格（元/核/小时）
+   * vCPU     46                       0.096
+   * 产品名称  包月标准价格（元/G/月）   按需标准价格（元/G/小时）
+   * 内存     17                       0.035
+   */
+  private parseUnitPrices(markdown: string, source: string): PriceItem[] {
+    const prices: PriceItem[] = [];
+    // 分段处理，每个 ## 标题为一个规格族
+    const sections = markdown.split(/(?=^## )/m);
+
+    for (const section of sections) {
+      // 提取规格族名称
+      const familyMatch = section.match(/^##\s+(.+)/m);
+      const familyName = familyMatch ? familyMatch[1].trim() : "通用";
+
+      // 解析 CPU 单价：行中包含 vCPU 或 "核"，并且有价格数字
+      const cpuMatch = section.match(/vCPU\s+([\d.]+)\s+([\d.]+)/);
+      // 解析内存单价：行中包含 "内存" 或 "G/月"，并且有价格数字
+      const memMatch = section.match(/内存\s+([\d.]+)\s+([\d.]+)/);
+
+      if (cpuMatch) {
+        prices.push({
+          productName: `${familyName} CPU`,
+          specification: `${familyName} CPU`,
+          billingMode: "包年包月",
+          price: parseFloat(cpuMatch[1]),
+          unit: "元/核/月",
+          currency: "CNY",
+          source,
+          note: `${familyName} vCPU 包月单价`,
+        });
+        prices.push({
+          productName: `${familyName} CPU`,
+          specification: `${familyName} CPU`,
+          billingMode: "按量计费",
+          price: parseFloat(cpuMatch[2]),
+          unit: "元/核/小时",
+          currency: "CNY",
+          source,
+          note: `${familyName} vCPU 按需单价`,
+        });
+      }
+
+      if (memMatch) {
+        prices.push({
+          productName: `${familyName} 内存`,
+          specification: `${familyName} 内存`,
+          billingMode: "包年包月",
+          price: parseFloat(memMatch[1]),
+          unit: "元/GB/月",
+          currency: "CNY",
+          source,
+          note: `${familyName} 内存包月单价`,
+        });
+        prices.push({
+          productName: `${familyName} 内存`,
+          specification: `${familyName} 内存`,
+          billingMode: "按量计费",
+          price: parseFloat(memMatch[2]),
+          unit: "元/GB/小时",
+          currency: "CNY",
+          source,
+          note: `${familyName} 内存按需单价`,
+        });
+      }
+    }
+
+    return prices;
   }
 
   /**
