@@ -351,58 +351,291 @@ get_product_price_quick({ provider: "huawei", productId: "ecs" })
 - 检查返回数据格式是否符合预期
 - 确保新增云厂商适配器后测试覆盖所有工具
 
-## 开发工作流规范
+## 软件开发全流程规范
 
-### 全流程穿测（必须）
+### 一、代码框架与结构规范
 
-每次修改项目后，必须执行以下全流程穿测，确保基础功能和修改功能完全正常：
+#### 1.1 适配器模式规则
 
-1. **编译检查**：`npx tsc --noEmit` 确保无类型错误（`test-fix.ts` 的预存错误除外）
-2. **启动服务**：`npm run start` 确认 MCP Server 正常启动（stdio 模式）
-3. **核心功能穿测**：使用 MCP Inspector 或直接调用工具，覆盖以下场景：
-   - 至少 1 个传统云厂商（如 ctyun）的完整链路：`list_products` → `get_document_toc` → `search_documents` → `get_page_metadata` → `get_page_content`
-   - 至少 1 个 AI 厂商（如 deepseek）的完整链路
-   - 至少 1 个厂商的价格查询：`get_product_price` 或 `get_product_price_quick`
-4. **修改专项测试**：对本次修改的函数进行针对性测试
-   - 修改了返回类型 → 验证返回的 JSON 结构包含 `items`/`total`/`page`/`pageSize`/`hasMore`
-   - 修改了 contentPath → 验证 `get_page_metadata` 返回的 contentPath 可被 `get_page_content` 消费
-   - 修改了价格逻辑 → 验证 `get_product_price` 返回的 `dataStatus` 字段正确
-5. **回归测试**：确保未修改的厂商功能不受影响
+- 新增云厂商适配器必须继承 `CloudDocAdapter` 抽象基类
+- 必须实现全部 6 个抽象方法（不可抛出 `NotImplementedError`）
+- 必须包含 `filterByKeywords`、`paginate`、`parsePriceTable` 三个私有辅助方法
+- 必须在 `adapters/index.ts` 中注册适配器实例
+- 必须在 `adapters/index.ts` 的 `providerAliases` 中添加别名映射（如有）
+- 必须在 `stdio.ts` 的 instructions 中添加厂商说明
 
-### 提交规范
+#### 1.2 文件职责边界
 
-每次修改完项目后，必须自行 commit，commit message 需详细说明修改点及缘由：
+```
+src/
+├── index.ts              # 仅 Cloudflare Worker 入口（不部署，仅保留兼容性）
+├── stdio.ts              # MCP Server 主入口：工具注册、参数校验、响应格式化
+├── types.ts              # 仅天翼云 API 响应类型 + 导出 base.ts 类型
+├── adapters/
+│   ├── index.ts          # 适配器工厂：getAdapter() + getSupportedProviders()
+│   ├── base.ts           # 抽象基类 + 全部共享类型定义 + 基础工具方法
+│   └── *.ts              # 各厂商适配器：只实现 6 个抽象方法，不做工具注册相关的事
+└── utils/
+    └── html-to-md.ts     # HTML 转 Markdown 工具函数
+```
 
-```bash
-# 格式
-git add <files>
-git commit -m "类型: 简短描述
+**原则：** 一个文件一个职责。适配器只关注"如何获取该厂商的文档数据"，不关注"数据如何被 MCP 工具消费"。
+
+#### 1.3 导入规范
+
+- 类型导入使用 `import type { ... }` 语法（编译期擦除，减少运行时开销）
+- 第三方库导入放在第一组，内部模块导入放在第二组
+- 不使用的 import 必须删除
+- 禁止使用 `import * as` 导入非必要的内容
+
+```typescript
+// ✅ 正确
+import * as cheerio from "cheerio";
+import { htmlToMarkdown } from "../utils/html-to-md.js";
+import { CloudDocAdapter, type Product, type TocItem, type SearchResult, type PaginatedResult } from "./base.js";
+
+// ❌ 禁止
+import { CloudDocAdapter, Product, TocItem, SearchResult } from "./base.js"; // 未使用 type 关键字
+import { unusedVar } from "./base.js"; // 未使用的导入
+```
+
+#### 1.4 命名规范
+
+| 类别 | 规范 | 示例 |
+|------|------|------|
+| 类名 | PascalCase | `CtyunAdapter`, `CloudDocAdapter` |
+| 方法名 | camelCase | `getDocumentToc`, `parsePriceTable` |
+| 变量名 | camelCase | `productId`, `pageSize` |
+| 常量 | UPPER_SNAKE_CASE | `BASE_URL`, `PRODUCTS_API` |
+| 类型/接口 | PascalCase | `PriceResult`, `PaginatedResult` |
+| 私有方法 | camelCase（不加 `_` 前缀） | `filterByKeywords` |
+| 文件名 | kebab-case | `ctyun.ts`, `html-to-md.ts` |
+| 文件扩展名 | `.ts`（编译后为 `.js`） | `aliyun.ts` → `aliyun.js` |
+
+#### 1.5 文件组织规范
+
+- 方法按调用顺序排列：`listProducts` → `getDocumentToc` → `searchDocuments` → `getPageMetadata` → `getPageContent` → `getProductPrice`
+- 私有辅助方法放在所有公有方法之后
+- 类型定义放在文件顶部（导入之后）
+- 常量定义放在文件顶部（导入之后、类定义之前）
+
+### 二、代码质量规范
+
+#### 2.1 DRY 原则（禁止重复）
+
+- **禁止重复的 parsePriceTable**：每个适配器有自己的价格表格解析逻辑，这是合理的（各厂商格式不同）。但如果两个适配器的解析逻辑完全相同，必须提取到基类或工具函数中
+- **禁止重复的 filterByKeywords**：基类中已有 `fetchWithRetry`、`fetchHtml`、`fetchJson`、`fetchText` 方法，适配器中禁止再写重复的网络请求逻辑
+- **禁止重复的 URL 拼接**：将 BASE_URL 定义为类常量，所有 URL 基于 BASE_URL 拼接
+
+#### 2.2 禁止使用的语句和模式
+
+| 禁止项 | 原因 | 替代方案 |
+|--------|------|---------|
+| `as any` | 绕过类型检查 | 使用正确的类型定义 |
+| `@ts-ignore` / `@ts-nocheck` | 隐藏类型错误 | 修复类型或使用类型守卫 |
+| `!` 非空断言（`foo!.bar`） | 可能运行时崩溃 | 使用可选链 `foo?.bar` 或类型守卫 |
+| `console.log`（生产代码） | 污染 stdout | 使用 `console.error`（MCP stdio 模式 stdout 为协议通道） |
+| `any` 类型 | 丧失类型安全 | 使用 `unknown` + 类型守卫 |
+| `// TODO:`（长期未处理） | 技术债务积累 | 立即实现或创建 Issue |
+| `Promise<void>` 但不 await | 未捕获的拒绝 | 使用 `void` 操作符标记有意忽略 |
+| 魔法数字 | 不可维护 | 定义为具名常量 |
+| 空的 catch 块 | 吞咽错误 | 至少记录 `console.error` |
+| `process.exit()`（库代码） | 杀死宿主进程 | 抛出错误让调用者处理 |
+
+#### 2.3 类型安全规范
+
+- 优先使用 `interface` 定义对象形状，使用 `type` 定义联合类型/工具类型
+- 函数参数使用解构时，必须同时定义类型注解
+- 禁止隐式 `any`：所有函数参数必须有明确的类型注解
+- 泛型约束使用 `extends` 而非 `any`
+- `PriceResult` 的 `dataStatus` 字段必须为字面量联合类型 `"complete" | "partial" | "no_price" | "no_data"`
+
+```typescript
+// ✅ 正确
+async function getPageMetadata(pageId: string): Promise<PageMetadata> { ... }
+const filtered = items.filter((item: TocItem) => item.title.includes(keyword));
+
+// ❌ 禁止
+async function getPageMetadata(pageId) { ... } // 隐式 any
+const filtered = items.filter(item => item.title.includes(keyword as any)); // as any
+```
+
+#### 2.4 异步编程规范
+
+- 优先使用 `async/await`，禁止裸 `.then()` / `.catch()`
+- 并行请求使用 `Promise.all()`，禁止串行 await
+- 使用基类的 `fetchWithRetry`（自动重试 2 次），不要自己写重试逻辑
+- `fetchWithTimeout` 默认超时 15 秒，API 请求超时可传 `timeout` 参数
+- 捕获异常时使用 `instanceof Error` 判断类型
+
+```typescript
+// ✅ 正确 — 并行请求
+const [toc, price] = await Promise.all([
+  adapter.getDocumentToc(productId),
+  adapter.getProductPrice(productId),
+]);
+
+// ❌ 禁止 — 串行请求
+const toc = await adapter.getDocumentToc(productId);
+const price = await adapter.getProductPrice(productId);
+
+// ✅ 正确 — 错误处理
+try {
+  const result = await adapter.listProducts();
+} catch (error) {
+  console.error(`请求失败: ${error instanceof Error ? error.message : String(error)}`);
+}
+```
+
+### 三、错误处理规范
+
+#### 3.1 适配器层
+
+- 网络请求：使用 `fetchWithRetry`，失败时抛出 Error（由 stdio.ts 统一捕获）
+- 数据解析：**必须 try/catch 包裹**，单个页面解析失败不中断整体流程
+- 空结果：返回空数组/空对象，不抛出异常
+- 无效参数：`getProductPrice` 无 `productId` 时返回空 `PriceResult`
+
+#### 3.2 MCP 工具层（stdio.ts）
+
+- 所有工具必须用 try/catch 包裹整个业务逻辑
+- 异常时返回标准错误 JSON：`{ error: true, message, provider, suggestion }`
+- 永远不抛出异常到 MCP SDK 层
+
+#### 3.3 错误信息规范
+
+- 错误信息必须包含：错误原因 + 建议操作
+- 网络错误：`"请求失败: {status} {statusText} — {url}"`
+- 参数错误：`"请提供合法参数: {detail}"` + `suggestion`
+- 权限错误：`"认证失败: {detail}"` + `suggestion`
+
+### 四、测试规范
+
+#### 4.1 全流程穿测（每次修改后必须执行）
+
+1. **编译检查**：`npx tsc --noEmit` 确保无类型错误
+2. **核心功能穿测**：覆盖以下场景
+   - 至少 1 个传统云厂商的完整链路
+   - 至少 1 个 AI 厂商的完整链路
+   - 至少 1 个厂商的价格查询
+3. **修改专项测试**：对本次修改的函数进行针对性验证
+4. **回归测试**：确保未修改的厂商功能不受影响
+
+#### 4.2 验证指标
+
+| 检查项 | 验证方式 | 通过标准 |
+|--------|---------|---------|
+| PaginatedResult 结构 | 检查 JSON 字段 | 包含 items/total/page/pageSize/hasMore |
+| contentPath 可用性 | metadata → content 链路 | getPageContent 返回非空 Markdown |
+| dataStatus 完整性 | 检查 PriceResult | dataStatus 不为 undefined |
+| 搜索功能 | searchDocuments | 返回结果数组，非空时包含 pageId |
+| 编译 | tsc --noEmit | 0 个错误（test-fix.ts 预存错误除外） |
+
+### 五、提交规范
+
+#### 5.1 Commit Message 格式
+
+```
+类型: 简短描述（不超过 50 字）
 
 ## 修改内容
-- 修改点1：具体说明
-- 修改点2：具体说明
+- 修改点 1：具体说明文件和修改内容
+- 修改点 2：具体说明
 
 ## 修改缘由
-- 缘由1：为什么这样改
-- 缘由2：解决了什么问题
+- 缘由 1：为什么这样改
+- 缘由 2：解决了什么问题
 
 ## 影响范围
 - 影响的厂商/模块
-- 是否需要更新文档"
+- 是否需要更新文档/迁移数据
 ```
 
-**commit 类型前缀：**
-| 前缀 | 用途 |
-|------|------|
-| `feat` | 新增功能/适配器 |
-| `fix` | 修复 bug |
-| `refactor` | 重构（不改变外部行为） |
-| `style` | 代码风格调整 |
-| `docs` | 文档更新 |
-| `chore` | 构建/工具链变更 |
+#### 5.2 Commit 类型前缀
 
-**禁止行为：**
-- ❌ 不允许 `git commit -m "fix bug"` 这种无意义 message
-- ❌ 不允许跳过测试直接 commit
-- ❌ 不允许一次性 commit 大量无关修改（应拆分）
+| 前缀 | 用途 | 示例 |
+|------|------|------|
+| `feat` | 新增功能/适配器 | `feat: 新增青云适配器` |
+| `fix` | 修复 bug | `fix: 华为云 getDocumentToc 返回类型错误` |
+| `refactor` | 重构 | `refactor: 统一适配器返回类型为 PaginatedResult` |
+| `style` | 代码风格调整 | `style: 统一 filterByKeywords 命名` |
+| `docs` | 文档更新 | `docs: 更新适配器规范` |
+| `chore` | 构建/工具链 | `chore: 升级 typescript 到 5.x` |
+
+#### 5.3 禁止行为
+
+- ❌ `git commit -m "fix bug"` — 无意义 message
+- ❌ 跳过测试直接 commit
+- ❌ 一次性 commit 大量无关修改（应拆分）
+- ❌ commit 包含 `console.log` 调试代码
+- ❌ commit 包含自动生成的无需提交的文件
+
+### 六、代码审查规范
+
+#### 6.1 自我审查清单（commit 前检查）
+
+- [ ] 编译通过（`npx tsc --noEmit`）
+- [ ] 没有 `console.log`（生产代码用 `console.error`）
+- [ ] 没有 `as any` / `@ts-ignore` / `!` 非空断言
+- [ ] 所有函数参数有明确的类型注解
+- [ ] 新增适配器在 `index.ts` 注册
+- [ ] 返回类型符合基类签名
+- [ ] 异常路径有 try/catch 处理
+- [ ] 价格查询返回了 `dataStatus` 字段
+- [ ] 全流程穿测通过
+- [ ] 如涉及 API 变化，更新了 instructions
+
+#### 6.2 常见审查发现
+
+| 问题 | 严重程度 | 检查方法 |
+|------|---------|---------|
+| 返回类型与基类不一致 | ❌ 阻断 | `npx tsc --noEmit` |
+| 未处理异常路径 | ⚠️ 高 | 检查 try/catch 覆盖率 |
+| 魔法数字/URL | ⚠️ 中 | grep 查找硬编码值 |
+| console.log 污染 stdout | ❌ 阻断 | grep 'console.log' |
+| 未使用的导入 | ⚠️ 低 | 编辑器提示 / lint |
+
+### 七、常量与配置管理规范
+
+- API 端点 URL 定义为类级别 `const`（`BASE_URL`、`API_URL` 等）
+- 超时时间、重试次数等配置参数使用默认参数，非特殊情况不改写
+- 厂商特有映射表（如产品代码映射）定义为 `private readonly` 属性
+- 禁止在方法内部硬编码 URL 片段（如 `/v2/portal/book/ListForHelp`），应定义为常量
+
+```typescript
+// ✅ 正确
+const BASE_URL = "https://www.ctyun.cn";
+private readonly PRODUCT_CODE_MAP: Record<string, string> = { "6396": "ECS" };
+
+// ❌ 禁止
+const url = `https://www.ctyun.cn/v2/portal/book/ListForHelp?bookClassDomain=product`;
+```
+
+### 八、性能规范
+
+- **并行请求**：循环查询多个地域/产品时使用 `Promise.all`，禁止串行 await
+- **缓存**：频繁访问的数据（如产品列表、llms.txt）使用私有缓存变量
+- **分页**：`listProducts` 和 `getDocumentToc` 返回大列表时必须分页
+- **超时**：所有网络请求必须有超时控制（基类 `fetchWithTimeout` 默认 15 秒）
+- **限制并发**：`Promise.all` 的并发数不超过 20（防止连接池耗尽）
+- **避免重复请求**：同一个工具的多次调用应利用适配器的缓存机制（如 `productListCache`）
+
+### 九、安全规范
+
+- 所有工具为只读操作，禁止写入/修改/删除
+- API 密钥/token 禁止硬编码在代码中
+- 用户输入的 URL 参数必须校验格式，禁止 SSRF
+- HTML 内容中提取文本时，使用 cheerio 安全解析，禁止正则表达式直接提取
+- 检测文件编码时限制检测范围（如仅读取前 1024 字节），防止恶意大文件
+
+### 十、FAQ 与常见陷阱
+
+| 问题 | 原因 | 解决方案 |
+|------|------|---------|
+| `getDocumentToc` 返回空 | 厂商文档站改版/API 变化 | 检查 HTML 结构是否变化 |
+| `getPageContent` 返回空或 HTML | 页面为 SPA 渲染 | 检查厂商是否改了前端框架 |
+| `getProductPrice` 返回 `dataStatus: "no_price"` | 该厂商文档不列价格 | 使用 `get_product_price_quick` 获取定价页 URL |
+| 编译错误 `not assignable to type` | 返回类型与基类不匹配 | 检查签名是否一致 |
+| MCP 连接后无响应 | stdout 被 `console.log` 污染 | 全部改为 `console.error` |
+| 中文乱码 | 编码检测失败 | 天翼云使用 GBK 编码检测器 |
 
