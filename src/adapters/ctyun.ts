@@ -328,19 +328,22 @@ export class CtyunAdapter extends CloudDocAdapter {
   /**
    * 获取产品价格信息
    *
-   * 对于 ECS（productId=10026730）：
-   * 1. 从价格总览页面解析 CPU 单价（元/核/月）和内存单价（元/G/月）
-   * 2. 基于单价自动计算常见规格（2C4G、4C8G 等）的包月和按需价格
+   * 通过调用天翼云内部价格计算器 API 获取精确价格。
+   * 当前仅支持 ECS（productId=10026730）。
    *
-   * 对于云电脑（productId=10027004）：
-   * 文档中已有完整价格表，通过 parsePriceTable 直接解析
+   * 流程：
+   * 1. 获取 ct_tgc cookie
+   * 2. 获取地域列表（默认使用第一个）
+   * 3. 获取 flavor UUID 映射
+   * 4. 构造 flavorsInfo 数组，调用 proxyv3/querynew API
+   * 5. 解析响应，输出为 PriceItem[]
    */
-  async getProductPrice(productId?: string, _options?: PriceQueryOptions): Promise<PriceResult> {
+  async getProductPrice(productId?: string, options?: PriceQueryOptions): Promise<PriceResult> {
     const result: PriceResult = {
       provider: this.provider,
       name: this.name,
       prices: [],
-      source: `${BASE_URL}/document/`,
+      source: "https://console.ctyun.cn/console/compute/api/proxyv3/querynew/",
       updateDate: new Date().toISOString().split("T")[0],
     };
 
@@ -349,68 +352,97 @@ export class CtyunAdapter extends CloudDocAdapter {
     }
 
     try {
-      // 搜索计费相关文档
-      const billingPages = await this.searchDocuments(productId, "价格");
-      const billingPages2 = await this.searchDocuments(productId, "计费");
-      const allPages = [...billingPages, ...billingPages2];
-
-      // 去重
-      const seen = new Set<string>();
-      const uniquePages = allPages.filter((p) => {
-        if (seen.has(p.pageId)) return false;
-        seen.add(p.pageId);
-        return true;
-      });
-
-      // 优先选择标题包含"价格"、"计费"、"定价"的页面
-      const priorityPages = uniquePages.filter(
-        (p) =>
-          p.title.includes("价格") ||
-          p.title.includes("计费") ||
-          p.title.includes("定价") ||
-          p.title.includes("收费")
-      );
-
-      const pagesToFetch = priorityPages.length > 0 ? priorityPages.slice(0, 3) : uniquePages.slice(0, 3);
-
-      for (const page of pagesToFetch) {
-        try {
-          const metadata = await this.getPageMetadata(page.pageId);
-          if (!metadata.contentPath) continue;
-
-          const markdown = await this.getPageContent(metadata.contentPath);
-
-          // 先尝试解析完整价格表
-          const parsed = this.parsePriceTable(markdown, metadata.contentPath);
-          if (parsed.length > 0) {
-            result.prices.push(...parsed);
-          }
-
-          // 尝试解析组件单价（CPU 元/核/月、内存元/G/月）
-          const unitPrices = this.parseUnitPrices(markdown, metadata.contentPath);
-          if (unitPrices.length > 0) {
-            result.prices.push(...unitPrices);
-          }
-        } catch {
-          continue;
-        }
-      }
-
-      // 从组件单价推算常见规格价格
-      result.prices.push(...this.calculateCommonSpecs(result.prices, result.source));
-
-      // 标记数据状态
-      if (result.prices.length > 0 && result.prices.some((p) => p.price > 0)) {
-        result.dataStatus = "complete";
-      } else if (result.prices.length > 0 && result.prices[0].price === 0) {
-        result.dataStatus = "no_price";
-        result.note = "天翼云部分定价页面为 JavaScript 动态渲染，文档中可能无法获取完整价格数据。如需实时价格，请访问天翼云官网价格计算器。";
-      } else {
+      // 仅支持 ECS（productId=10026730）
+      if (productId !== "10026730") {
         result.dataStatus = "no_data";
-        result.note = "天翼云定价页面为 JavaScript 动态渲染，文档中无法获取完整价格数据。如需实时价格，请访问天翼云官网价格计算器：https://www.ctyun.cn/price";
+        result.note = `暂不支持 productId=${productId} 的价格查询，当前仅支持 ECS（productId=10026730）`;
+        return result;
       }
-    } catch {
+
+      // 1. 获取 cookie
+      const cookie = await this.getCtyunCookie();
+
+      // 2. 获取地域列表，默认使用第一个
+      const regions = await this.getRegionList();
+      const defaultRegion = regions.length > 0 ? regions[0] : { id: "bb9fdb42056f11eda1610242ac110002", name: "华东1" };
+
+      // 3. 获取 flavor 映射
+      const flavorMap = await this.getFlavorMap();
+      if (flavorMap.size === 0) {
+        result.dataStatus = "no_data";
+        result.note = "获取规格映射失败，无法查询价格";
+        return result;
+      }
+
+      // 4. 构造 flavorsInfo 数组
+      const flavorsInfo: Array<{
+        spec_name: string;
+        cpu: number;
+        mem: number;
+        flavor_uuid: string;
+        flavorType: string;
+        cpuinfo: string;
+      }> = [];
+      for (const [_, info] of flavorMap) {
+        flavorsInfo.push(info);
+      }
+
+      // 5. 调用 proxyv3/querynew 获取价格
+      const priceUrl = "https://console.ctyun.cn/console/compute/api/proxyv3/querynew/";
+      const priceRes = await this.fetchWithRetry(priceUrl, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          "Referer": `${BASE_URL}/`,
+          "Accept": "application/json",
+          "Cookie": `ct_tgc=${cookie}`,
+        },
+        body: JSON.stringify({
+          billMode: 1,
+          regionId: defaultRegion.id,
+          resourceType: "ecs_flavor",
+          flavorsInfo,
+          cycleCnt: 1,
+          cycleType: "M",
+        }),
+      });
+      const priceRaw = await priceRes.json() as any;
+
+      // 6. 解析响应
+      const returnObj = priceRaw.returnObj;
+      if (!returnObj || priceRaw.statusCode !== 800) {
+        result.dataStatus = "no_data";
+        result.note = `价格查询失败：${priceRaw.message || "未知错误"}`;
+        return result;
+      }
+
+      const subOrders = returnObj.subOrderPrices || [];
+      for (const sub of subOrders) {
+        const flavorInfo = flavorMap.get(sub.flavor_uuid);
+        if (!flavorInfo) continue;
+
+        // 查找 VM 类型的价格（不含系统盘和网络）
+        const vmPrice = (sub.orderItemPrices || []).find(
+          (p: any) => p.resourceType === "VM"
+        );
+
+        result.prices.push({
+          productName: `弹性云主机 ${flavorInfo.spec_name}`,
+          specification: `${flavorInfo.cpu}核 ${flavorInfo.mem}GB ${flavorInfo.cpuinfo} ${flavorInfo.flavorType}`,
+          billingMode: "包年包月",
+          price: vmPrice ? vmPrice.finalPrice : sub.finalPrice,
+          unit: "元/月",
+          currency: "CNY",
+          region: defaultRegion.name,
+          source: priceUrl,
+          note: "仅计算实例费用，不含系统盘和网络",
+        });
+      }
+
+      result.dataStatus = result.prices.length > 0 ? "complete" : "no_data";
+    } catch (error) {
       result.dataStatus = "no_data";
+      result.note = `价格查询失败：${error instanceof Error ? error.message : String(error)}`;
     }
 
     return result;
