@@ -146,13 +146,12 @@ src/
 
 | 工具 | 参数 | 用途 |
 |------|------|------|
-| `list_products` | provider | 获取所有产品文档列表 |
+| `list_products` | provider | 获取所有产品文档列表（**优先使用 keyword 参数搜索**，不传 keyword 返回全量列表需翻页） |
 | `get_document_toc` | provider, productId | 获取文档目录（支持 keyword 过滤） |
 | `search_documents` | provider, productId, keyword | 搜索文档（支持关键词自动扩展） |
 | `get_page_metadata` | provider, pageId | 获取页面元信息（contentPath 已统一为完整 URL） |
 | `get_page_content` | provider, contentPath | 获取 Markdown 正文 |
-| `get_product_price` | provider, productId? | 获取产品价格信息 |
-| `get_product_price_quick` | provider, productId? | **快捷定价查询** — 直接返回已知定价页面 URL，绕过目录浏览 |
+| `get_product_price` | provider, productId?, quick? | 获取产品价格信息（quick=true 时返回定价页面 URL，quick=false 时动态获取价格数据） |
 
 ## MCP 工具使用指引（重要）
 
@@ -167,7 +166,7 @@ src/
 - `list_products` 结果可能过大（如阿里云），需分块读取或 grep 过滤
 
 ### 价格查询流程（优化版）
-1. **优先使用 `get_product_price_quick`**：对于已知产品 ID 的场景，直接获取定价页面 URL
+1. **优先使用 `get_product_price(quick=true)`**：对于已知产品 ID 的场景，直接获取定价页面 URL
 2. **`search_documents` 搜索宽泛关键词**：用"价格""计费"等宽泛词
 3. **`get_product_price` 回退**：文档找不到价格时调用
 
@@ -250,14 +249,14 @@ npm run start
 
 ### 价格获取策略
 
-| 厂商 | 文档价格 | get_product_price | get_product_price_quick |
+| 厂商 | 文档价格 | get_product_price | get_product_price(quick=true) |
 |------|---------|-------------------|------------------------|
 | deepseek | `/quick_start/pricing` | ✅ 可用 | ✅ 支持 |
 | minimax | `/docs/guides/pricing-paygo` | ✅ 可用 | ✅ 支持 |
 | kimi | `/docs/pricing` | ✅ 可用 | ✅ 支持 |
 | bailian | `/zh/model-studio/billing` | ✅ 可用 | ✅ 支持 |
 | glm | `open.bigmodel.cn/pricing` | ⚠️ SPA 页面 | ✅ 支持 |
-| ctyun | 文档计费说明 | ✅ 可用（需 productId） | ✅ 支持 |
+| ctyun | 文档计费说明 | ✅ 可用（内部价格计算器 API，支持 ECS 规格精确询价） | ✅ 支持 |
 | aliyun | 文档计费说明 | ✅ 可用（需 productId，文档无价格表时返回提示） | ✅ 支持 |
 | volcengine | 文档计费规则 | ✅ 可用（GetTable API） | ✅ 支持 |
 | tencent | 文档计费说明 | ✅ 可用（CVM API） | ✅ 支持 |
@@ -271,6 +270,8 @@ npm run start
 - `GetFolderBook` API 已废弃，目录需从 HTML 页面提取
 - 所有工具为只读操作
 - 天翼云 API 无需认证
+- 天翼云 `getProductPrice` 通过内部价格计算器 API（`proxyv3/querynew`）获取精确价格，流程：获取 `ct_tgc` cookie → 获取地域列表 → 获取 flavor UUID 映射 → 调用 `proxyv3/querynew` 询价。当前仅支持 ECS（productId=10026730），返回 150+ 条规格价格数据
+- 天翼云 `listProducts` 已填充 `description` 字段（从 API 的 `note` 获取），`filterByKeywords` 搜索时包含 `description` 实现全文检索，返回时由 stdio.ts 统一去掉 `description` 节约 token
 - 阿里云 API 返回 JSON 目录树，内容需 HTML 转 Markdown
 - 火山引擎 API 无需认证，文档内容直接返回 Markdown（`MDContent` 字段）
 - 腾讯云文档为 SSR 渲染，内容需从 HTML 转换为 Markdown
@@ -336,6 +337,7 @@ get_product_price({ provider: "minimax" })
 get_product_price({ provider: "bailian" })
 
 # 传统云厂商价格（需指定 productId）
+get_product_price({ provider: "ctyun", productId: "10026730" })  # ECS 价格（内部 API 询价，返回 150+ 条规格价格）
 get_product_price({ provider: "ctyun", productId: "11061839" })
 get_product_price({ provider: "aliyun", productId: "model-studio" })
 get_product_price({ provider: "volcengine" })
@@ -346,9 +348,9 @@ get_product_price({ provider: "huawei" })
 get_product_price({ provider: "huawei", productId: "maas" })
 
 # 快捷定价查询
-get_product_price_quick({ provider: "tencent", productId: "cvm" })
-get_product_price_quick({ provider: "aliyun", productId: "ecs" })
-get_product_price_quick({ provider: "huawei", productId: "ecs" })
+get_product_price(quick=true)({ provider: "tencent", productId: "cvm" })
+get_product_price(quick=true)({ provider: "aliyun", productId: "ecs" })
+get_product_price(quick=true)({ provider: "huawei", productId: "ecs" })
 ```
 
 ### 验证原则
@@ -641,7 +643,7 @@ const url = `https://www.ctyun.cn/v2/portal/book/ListForHelp?bookClassDomain=pro
 |------|------|---------|
 | `getDocumentToc` 返回空 | 厂商文档站改版/API 变化 | 检查 HTML 结构是否变化 |
 | `getPageContent` 返回空或 HTML | 页面为 SPA 渲染 | 检查厂商是否改了前端框架 |
-| `getProductPrice` 返回 `dataStatus: "no_price"` | 该厂商文档不列价格 | 使用 `get_product_price_quick` 获取定价页 URL |
+| `getProductPrice` 返回 `dataStatus: "no_price"` | 该厂商文档不列价格 | 使用 `get_product_price(quick=true)` 获取定价页 URL |
 | 编译错误 `not assignable to type` | 返回类型与基类不匹配 | 检查签名是否一致 |
 | MCP 连接后无响应 | stdout 被 `console.log` 污染 | 全部改为 `console.error` |
 | 中文乱码 | 编码检测失败 | 天翼云使用 GBK 编码检测器 |
