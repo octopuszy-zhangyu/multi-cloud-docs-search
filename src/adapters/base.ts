@@ -189,12 +189,12 @@ export abstract class CloudDocAdapter {
   /**
    * 按关键词过滤列表（AND 逻辑，关键词以空格分隔，大小写不敏感）
    */
-  protected filterByKeywords<T extends { name?: string; title?: string }>(items: T[], keyword?: string): T[] {
+  protected filterByKeywords<T extends { name?: string; title?: string; description?: string }>(items: T[], keyword?: string): T[] {
     if (!keyword) return items;
     const keywords = keyword.trim().split(/\s+/).filter(Boolean);
     if (keywords.length === 0) return items;
     return items.filter(item => {
-      const text = (item.name || item.title || "").toLowerCase();
+      const text = ((item.name || item.title || "") + " " + (item.description || "")).toLowerCase();
       return keywords.every(kw => text.includes(kw.toLowerCase()));
     });
   }

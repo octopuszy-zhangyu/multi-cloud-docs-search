@@ -30,6 +30,7 @@ export class CtyunAdapter extends CloudDocAdapter {
         result.push({
           productId: p.bookId,
           name: this.clean(p.bookName),
+          description: p.note ? this.clean(p.note) : undefined,
         });
       }
     }
