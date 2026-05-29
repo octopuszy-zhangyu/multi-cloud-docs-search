@@ -181,17 +181,7 @@ export class CtyunAdapter extends CloudDocAdapter {
     const regions: Array<{ id: string; name: string }> = [];
     for (const cat of raw.data?.all || []) {
       for (const r of cat.list || []) {
-        if (r.isRegionV4 === "true") {
-          regions.push({ id: r.id, name: `${cat.name} ${r.name}` });
-        }
-      }
-    }
-    // 如果没有 V4 地域，回退到所有地域
-    if (regions.length === 0) {
-      for (const cat of raw.data?.all || []) {
-        for (const r of cat.list || []) {
-          regions.push({ id: r.id, name: `${cat.name} ${r.name}` });
-        }
+        regions.push({ id: r.id, name: `${cat.name} ${r.name}` });
       }
     }
     this.regionCache = regions;
@@ -524,6 +514,9 @@ export class CtyunAdapter extends CloudDocAdapter {
       result.note = "获取地域列表失败";
       return result;
     }
+    // 如果 keyword 是地域名但没匹配到，在 message 中提示
+    const regionHint = options?.keyword && !keywordRegion && /[一-龥]/.test(options.keyword)
+      ? `未找到地域"${options.keyword}"，默认使用 ${targetRegion.name}` : undefined;
 
     // 3. 获取 flavor 映射
     const flavorMap = await this.getFlavorMap(targetRegion.id);
