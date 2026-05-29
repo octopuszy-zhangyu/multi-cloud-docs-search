@@ -172,8 +172,23 @@ export class CtyunAdapter extends CloudDocAdapter {
         "Cookie": `ct_tgc=${cookie}`,
       },
     });
-    const raw = await res.json() as { code: string; data: Array<{ regionId: string; regionName: string }> };
-    const regions = (raw.data || []).map(r => ({ id: r.regionId, name: r.regionName }));
+    const raw = await res.json() as { code: string; data: { all: Array<{ category: string; id: string; name: string; list: Array<{ id: string; name: string; isRegionV4: string }> }> } };
+    const regions: Array<{ id: string; name: string }> = [];
+    for (const cat of raw.data?.all || []) {
+      for (const r of cat.list || []) {
+        if (r.isRegionV4 === "true") {
+          regions.push({ id: r.id, name: `${cat.name} ${r.name}` });
+        }
+      }
+    }
+    // 如果没有 V4 地域，回退到所有地域
+    if (regions.length === 0) {
+      for (const cat of raw.data?.all || []) {
+        for (const r of cat.list || []) {
+          regions.push({ id: r.id, name: `${cat.name} ${r.name}` });
+        }
+      }
+    }
     this.regionCache = regions;
     this.regionExpiry = Date.now() + 5 * 60 * 1000;
     return regions;
@@ -181,50 +196,42 @@ export class CtyunAdapter extends CloudDocAdapter {
 
   /**
    * 获取规格 UUID 映射
-   * 从价格计算器页面低代码配置 JSON 中解析所有规格的 flavor_uuid
+   * 从 serverextenddata API 获取所有规格的 flavor_id（即 flavor_uuid）
    */
-  private async getFlavorMap(): Promise<Map<string, { spec_name: string; cpu: number; mem: number; flavor_uuid: string; flavorType: string; cpuinfo: string }>> {
+  private async getFlavorMap(regionId: string): Promise<Map<string, { spec_name: string; cpu: number; mem: number; flavor_uuid: string; flavorType: string; cpuinfo: string }>> {
     if (this.flavorMapCache && Date.now() < this.flavorExpiry) {
       return this.flavorMapCache;
     }
-    const configUrl = "https://ctyun-nest-prod.gdoss.xstore.ctyun.cn/static/lowcode/page/56/622ecc9e036f47a4ab63fa764abe21dd.json";
-    const res = await this.fetchWithRetry(configUrl, {
+    const cookie = await this.getCtyunCookie();
+    const url = `https://console.ctyun.cn/console/compute/ecm/ecs/serverextenddata/?ctyunid=${regionId}&type=os&regionid=${regionId}`;
+    const res = await this.fetchWithRetry(url, {
       headers: {
         "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36",
+        "Referer": `${BASE_URL}/`,
         "Accept": "application/json",
+        "Cookie": `ct_tgc=${cookie}`,
       },
     });
-    const config = await res.json() as any;
+    const raw = await res.json() as any;
+    const specList = raw.spec_list || [];
     const map = new Map<string, { spec_name: string; cpu: number; mem: number; flavor_uuid: string; flavorType: string; cpuinfo: string }>();
 
-    // 从低代码配置 JSON 中递归查找 flavor 数据
-    const extractFlavors = (obj: any): void => {
-      if (!obj || typeof obj !== 'object') return;
-      if (Array.isArray(obj)) {
-        obj.forEach(extractFlavors);
-        return;
-      }
-      // 查找包含 flavorData 的数据源
-      if (obj.id === "flavorData" && Array.isArray(obj.data)) {
-        for (const item of obj.data) {
-          if (item.flavor_uuid) {
-            map.set(item.flavor_uuid, {
-              spec_name: item.spec_name || "",
-              cpu: item.cpu || 0,
-              mem: item.mem || 0,
-              flavor_uuid: item.flavor_uuid,
-              flavorType: item.flavorType || "",
-              cpuinfo: item.cpuinfo || "x86",
-            });
-          }
-        }
-        return;
-      }
-      for (const key of Object.keys(obj)) {
-        extractFlavors(obj[key]);
-      }
-    };
-    extractFlavors(config);
+    // 去重：同一个规格名在不同可用区有不同 flavor_id，取第一个
+    const seenSpec = new Set<string>();
+    for (const item of specList) {
+      const key = `${item.spec_name}_${item.flavor_type}`;
+      if (seenSpec.has(key)) continue;
+      seenSpec.add(key);
+
+      map.set(item.flavor_id, {
+        spec_name: item.spec_name || "",
+        cpu: item.vcpu || 0,
+        mem: item.ram || 0,
+        flavor_uuid: item.flavor_id,
+        flavorType: item.flavor_type || "",
+        cpuinfo: item.cpuinfo || "x86",
+      });
+    }
 
     this.flavorMapCache = map;
     this.flavorExpiry = Date.now() + 5 * 60 * 1000;
@@ -367,7 +374,7 @@ export class CtyunAdapter extends CloudDocAdapter {
       const defaultRegion = regions.length > 0 ? regions[0] : { id: "bb9fdb42056f11eda1610242ac110002", name: "华东1" };
 
       // 3. 获取 flavor 映射
-      const flavorMap = await this.getFlavorMap();
+      const flavorMap = await this.getFlavorMap(defaultRegion.id);
       if (flavorMap.size === 0) {
         result.dataStatus = "no_data";
         result.note = "获取规格映射失败，无法查询价格";
