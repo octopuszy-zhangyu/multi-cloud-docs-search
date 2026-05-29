@@ -16,10 +16,10 @@
 
 ### 返回类型规范
 
-| 方法 | 基类签名 | 必须返回类型 | 违规厂商 |
+| 方法 | 基类签名 | 必须返回类型 | 当前状态 |
 |------|---------|------------|---------|
-| `listProducts` | `(options?: ListProductsOptions) => Promise<Product[] \| PaginatedResult<Product>>` | **必须返回 `PaginatedResult<Product>`** | ❌ aliyun（返回 `Product[]`） |
-| `getDocumentToc` | `(productId: string, options?: TocOptions) => Promise<TocItem[] \| PaginatedResult<TocItem>>` | **必须返回 `PaginatedResult<TocItem>`** | ❌ aliyun、huawei、bailian（返回 `TocItem[]`） |
+| `listProducts` | `(options?: ListProductsOptions) => Promise<PaginatedResult<Product>>` | **必须返回 `PaginatedResult<Product>`** | ✅ 全部合规 |
+| `getDocumentToc` | `(productId: string, options?: TocOptions) => Promise<PaginatedResult<TocItem>>` | **必须返回 `PaginatedResult<TocItem>`** | ✅ 全部合规 |
 | `searchDocuments` | `(productId: string, keyword: string) => Promise<SearchResult[]>` | **必须返回 `SearchResult[]`** | ✅ 全部合规 |
 | `getPageMetadata` | `(pageId: string) => Promise<PageMetadata>` | **必须返回 `PageMetadata`** | ✅ 全部合规 |
 | `getPageContent` | `(contentPath: string) => Promise<string>` | **必须返回 `string`** | ✅ 全部合规 |
@@ -65,25 +65,20 @@
 | baidu | `productId/s/SLUG` | `BCC/s/8kbbkwg4p` |
 | bailian | 路径（以 `/` 开头） | `/zh/model-studio/billing` |
 
-### 私有辅助方法命名规范
+### 基类可重用方法
 
-所有适配器必须使用以下统一的私有方法命名：
+以下方法已在 `CloudDocAdapter` 基类中提供，所有适配器可直接使用：
 
 | 方法 | 签名 | 用途 |
 |------|------|------|
 | `filterByKeywords` | `<T extends { name?: string; title?: string }>(items: T[], keyword?: string): T[]` | 按空格分隔的关键词 AND 逻辑过滤 |
 | `paginate` | `<T>(items: T[], page?: number, pageSize?: number): PaginatedResult<T>` | 数组分页包装 |
-| `parsePriceTable` | `(markdown: string, source?: string): PriceItem[]` | 从 Markdown 表格解析价格 |
+| `paginateProducts` | `(products: Product[], options?: ListProductsOptions): PaginatedResult<Product>` | 合并 filterByKeywords + paginate 快捷方法 |
+| `determineDataStatus` | `(prices: PriceItem[]): "complete" | "partial" | "no_price" | "no_data"` | 根据价格数组判断数据状态 |
+| `makePriceResult` | `(prices: PriceItem[], source: string, extra?: Partial<PriceResult>): PriceResult` | 构造 PriceResult 的快捷方法 |
+| `parseMarkdownTable` | `(markdown: string): { headers: string[]; rows: string[][] }` | 解析 Markdown 表格行 |
 
-**违规厂商：**
-- ❌ aliyun：缺少 `filterByKeywords` 和 `paginate`（内联实现）
-- ❌ huawei：缺少 `filterByKeywords` 和 `paginate`（内联实现）
-- ❌ bailian：缺少 `filterByKeywords` 和 `paginate`（内联实现）
-- ❌ deepseek：`filterByKeywords` 和 `paginate` 为私有方法（正确）
-- ❌ glm：`filterByKeywords` 和 `paginate` 为私有方法（正确）
-- ❌ minimax：`filterByKeywords` 和 `paginate` 为私有方法（正确）
-- ❌ kimi：`filterByKeywords` 和 `paginate` ��私有方法（正确）
-- ❌ baidu：`filterByKeywords` 和 `paginate` 为私有方法（正确）
+**注意：** 新增适配器时**不需要**自己实现 `filterByKeywords` 和 `paginate`，直接调用基类方法即可。`parsePriceTable` 因各厂商价格表格格式差异大，需各适配器自行实现。
 
 ### 错误处理规范
 
@@ -114,7 +109,8 @@
 - [ ] `getPageMetadata` 返回 `PageMetadata`（contentPath 可被 stdio.ts 消费）
 - [ ] `getPageContent` 返回 Markdown 格式字符串
 - [ ] `getProductPrice` 返回 `PriceResult`（含 dataStatus）
-- [ ] 包含 `filterByKeywords`、`paginate`、`parsePriceTable` 三个私有方法
+- [ ] 利用基类的 `filterByKeywords`、`paginate`、`paginateProducts`、`makePriceResult` 等方法
+- [ ] 实现 `parsePriceTable` 私有方法（各厂商价格表格格式不同，需自行实现）
 - [ ] 在 `adapters/index.ts` 注册
 - [ ] 在 `stdio.ts` 的 instructions 中添加厂商说明
 - [ ] 在 CLAUDE.md 的厂商列表和价格策略表中添加记录
@@ -207,6 +203,16 @@ src/
 npm run start    # 启动 MCP Server（stdio 模式）
 npm run dev      # 开发模式（文件监听）
 npm run build    # TypeScript 编译检查
+npx tsx src/smoke-test.ts  # 全流程穿测（需先创建穿测脚本）
+```
+
+**MCP Inspector 调试：**
+```bash
+# 方式 1：使用 MCP Inspector（推荐）
+npx @modelcontextprotocol/inspector npx tsx src/stdio.ts
+
+# 方式 2：直接启动后通过 MCP 客户端连接
+npm run start
 ```
 
 ## 常用产品 bookId
@@ -359,7 +365,8 @@ get_product_price_quick({ provider: "huawei", productId: "ecs" })
 
 - 新增云厂商适配器必须继承 `CloudDocAdapter` 抽象基类
 - 必须实现全部 6 个抽象方法（不可抛出 `NotImplementedError`）
-- 必须包含 `filterByKeywords`、`paginate`、`parsePriceTable` 三个私有辅助方法
+- 利用基类的 `filterByKeywords`、`paginate`、`paginateProducts`、`makePriceResult` 等方法
+	- 实现 `parsePriceTable` 私有方法（各厂商价格表格格式不同，需自行实现）
 - 必须在 `adapters/index.ts` 中注册适配器实例
 - 必须在 `adapters/index.ts` 的 `providerAliases` 中添加别名映射（如有）
 - 必须在 `stdio.ts` 的 instructions 中添加厂商说明
