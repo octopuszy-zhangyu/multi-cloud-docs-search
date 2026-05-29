@@ -20,6 +20,10 @@ export class CtyunAdapter extends CloudDocAdapter {
   private regionExpiry: number = 0;
   private flavorMapCache: Map<string, { spec_name: string; cpu: number; mem: number; flavor_uuid: string; flavorType: string; cpuinfo: string }> | null = null;
   private flavorExpiry: number = 0;
+  private deskRegionCache: Array<{ id: string; name: string }> | null = null;
+  private deskRegionExpiry: number = 0;
+  private deskProductsCache: Map<string, any> | null = null;
+  private deskProductsExpiry: number = 0;
 
   async listProducts(options?: ListProductsOptions): Promise<PaginatedResult<Product>> {
     const url = `${BASE_URL}/v2/portal/book/ListForHelp?bookClassDomain=product&_t=${Date.now()}`;
@@ -239,6 +243,113 @@ export class CtyunAdapter extends CloudDocAdapter {
     return map;
   }
 
+  /**
+   * 从地域列表中查找包含关键字的地域
+   */
+  private findRegionByKeyword(regions: Array<{ id: string; name: string }>, keyword?: string): { id: string; name: string } | null {
+    if (!keyword) return null;
+    const kw = keyword.toLowerCase();
+    for (const r of regions) {
+      if (r.name.toLowerCase().includes(kw) || r.id.toLowerCase().includes(kw)) {
+        return r;
+      }
+    }
+    return null;
+  }
+
+  /**
+   * 获取天翼云电脑可用地域列表
+   */
+  private async getDeskRegionList(): Promise<Array<{ id: string; name: string }>> {
+    if (this.deskRegionCache && Date.now() < this.deskRegionExpiry) {
+      return this.deskRegionCache;
+    }
+    const url = "https://desk.ctyun.cn:8816/api/selforder/region/queryPoolList";
+    const res = await this.fetchWithRetry(url, {
+      headers: {
+        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36",
+        "Referer": "https://www.ctyun.cn/",
+        "Accept": "application/json",
+      },
+    });
+    const raw = await res.json() as { code: number; data: Array<{ regionId: string; regionName: string; zoneId: string[]; regionProperties: Record<string, any> }> };
+    const regions: Array<{ id: string; name: string }> = [];
+    for (const r of raw.data || []) {
+      regions.push({ id: r.regionId, name: r.regionName });
+    }
+    this.deskRegionCache = regions;
+    this.deskRegionExpiry = Date.now() + 5 * 60 * 1000;
+    return regions;
+  }
+
+  /**
+   * 获取天翼云电脑产品规格
+   */
+  private async getDesktopProducts(regionUuid: string): Promise<any> {
+    const cacheKey = regionUuid;
+    if (this.deskProductsCache && this.deskProductsCache.has(cacheKey) && Date.now() < this.deskProductsExpiry) {
+      return this.deskProductsCache.get(cacheKey);
+    }
+    const cookie = await this.getCtyunCookie();
+    const url = `https://desk.ctyun.cn:8816/api/selforder/prod/get?regionUuid=${regionUuid}&prodCode=BUSIDESKTOP`;
+    const res = await this.fetchWithRetry(url, {
+      headers: {
+        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36",
+        "Referer": "https://www.ctyun.cn/",
+        "Accept": "application/json",
+        "Cookie": `ct_tgc=${cookie}`,
+      },
+    });
+    const raw = await res.json() as { code: number; data: any[] };
+    const products = raw.data || [];
+    if (!this.deskProductsCache) {
+      this.deskProductsCache = new Map();
+    }
+    this.deskProductsCache.set(cacheKey, products);
+    this.deskProductsExpiry = Date.now() + 5 * 60 * 1000;
+    return products;
+  }
+
+  /**
+   * 查询天翼云电脑价格
+   */
+  private async queryDesktopPrice(regionUuid: string, skuConfig: any): Promise<{ totalPrice: number; finalPrice: number; productName: string }[]> {
+    const cookie = await this.getCtyunCookie();
+    const url = "https://desk.ctyun.cn:8816/api/selforder/paas/queryPrice";
+    const res = await this.fetchWithRetry(url, {
+      method: "POST",
+      headers: {
+        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36",
+        "Referer": "https://www.ctyun.cn/",
+        "Accept": "application/json",
+        "Cookie": `ct_tgc=${cookie}`,
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({
+        busiChannel: "010",
+        orderType: 1,
+        regionUuid,
+        sku: [skuConfig],
+      }),
+    });
+    const raw = await res.json() as { statusCode: number; returnObj: { totalPrice: number; finalPrice: number; subOrderPrices: Array<{ serviceTag: string; finalPrice: number; orderItemPrices: Array<{ ctyunName: string; finalPrice: number; resourceType: string }> }> } };
+    if (raw.statusCode !== 800 || !raw.returnObj) {
+      return [];
+    }
+    const results: { totalPrice: number; finalPrice: number; productName: string }[] = [];
+    const subOrders = raw.returnObj.subOrderPrices || [];
+    for (const sub of subOrders) {
+      for (const item of sub.orderItemPrices || []) {
+        results.push({
+          totalPrice: raw.returnObj.totalPrice,
+          finalPrice: item.finalPrice,
+          productName: item.ctyunName || sub.serviceTag,
+        });
+      }
+    }
+    return results;
+  }
+
   /** 清理字符串中的 HTML 标签和特殊字符 */
   private clean(str: string): string {
     if (!str) return "";
@@ -336,22 +447,29 @@ export class CtyunAdapter extends CloudDocAdapter {
   /**
    * 获取产品价格信息
    *
-   * 通过调用天翼云内部价格计算器 API 获取精确价格。
-   * 当前仅支持 ECS（productId=10026730）。
+   * 支持 ECS（productId=10026730）和云电脑政企版（productId=10027004）。
    *
-   * 流程：
+   * ECS 流程：
    * 1. 获取 ct_tgc cookie
-   * 2. 获取地域列表（默认使用第一个）
+   * 2. 获取地域列表（默认使用扬州地域）
    * 3. 获取 flavor UUID 映射
    * 4. 构造 flavorsInfo 数组，调用 proxyv3/querynew API
    * 5. 解析响应，输出为 PriceItem[]
+   *
+   * 云电脑流程：
+   * 1. 获取云电脑地域列表
+   * 2. 获取云电脑产品规格
+   * 3. 构造 SKU 配置，调用 queryPrice API
+   * 4. 解析响应，输出为 PriceItem[]
+   *
+   * options.keyword 支持地域过滤，当包含地域名称时只返回该地域价格。
    */
   async getProductPrice(productId?: string, options?: PriceQueryOptions): Promise<PriceResult> {
     const result: PriceResult = {
       provider: this.provider,
       name: this.name,
       prices: [],
-      source: "https://console.ctyun.cn/console/compute/api/proxyv3/querynew/",
+      source: "",
       updateDate: new Date().toISOString().split("T")[0],
     };
 
@@ -360,97 +478,269 @@ export class CtyunAdapter extends CloudDocAdapter {
     }
 
     try {
-      // 仅支持 ECS（productId=10026730）
+      // 云电脑政企版（productId=10027004）
+      if (productId === "10027004") {
+        return await this.getDesktopPrice(options);
+      }
+
+      // ECS（productId=10026730）
       if (productId !== "10026730") {
         result.dataStatus = "no_data";
-        result.note = `暂不支持 productId=${productId} 的价格查询，当前仅支持 ECS（productId=10026730）`;
+        result.note = `暂不支持 productId=${productId} 的价格查询，当前仅支持 ECS（productId=10026730）和云电脑政企版（productId=10027004）`;
         return result;
       }
 
-      // 1. 获取 cookie
-      const cookie = await this.getCtyunCookie();
-
-      // 2. 获取地域列表，默认使用第一个
-      const regions = await this.getRegionList();
-      const defaultRegion = regions.length > 0 ? regions[0] : { id: "bb9fdb42056f11eda1610242ac110002", name: "华东1" };
-
-      // 3. 获取 flavor 映射
-      const flavorMap = await this.getFlavorMap(defaultRegion.id);
-      if (flavorMap.size === 0) {
-        result.dataStatus = "no_data";
-        result.note = "获取规格映射失败，无法查询价格";
-        return result;
-      }
-
-      // 4. 构造 flavorsInfo 数组
-      const flavorsInfo: Array<{
-        spec_name: string;
-        cpu: number;
-        mem: number;
-        flavor_uuid: string;
-        flavorType: string;
-        cpuinfo: string;
-      }> = [];
-      for (const [_, info] of flavorMap) {
-        flavorsInfo.push(info);
-      }
-
-      // 5. 调用 proxyv3/querynew 获取价格
-      const priceUrl = "https://console.ctyun.cn/console/compute/api/proxyv3/querynew/";
-      const priceRes = await this.fetchWithRetry(priceUrl, {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-          "Referer": `${BASE_URL}/`,
-          "Accept": "application/json",
-          "Cookie": `ct_tgc=${cookie}`,
-        },
-        body: JSON.stringify({
-          billMode: 1,
-          regionId: defaultRegion.id,
-          resourceType: "ecs_flavor",
-          flavorsInfo,
-          cycleCnt: 1,
-          cycleType: "M",
-        }),
-      });
-      const priceRaw = await priceRes.json() as any;
-
-      // 6. 解析响应
-      const returnObj = priceRaw.returnObj;
-      if (!returnObj || priceRaw.statusCode !== 800) {
-        result.dataStatus = "no_data";
-        result.note = `价格查询失败：${priceRaw.message || "未知错误"}`;
-        return result;
-      }
-
-      const subOrders = returnObj.subOrderPrices || [];
-      for (const sub of subOrders) {
-        const flavorInfo = flavorMap.get(sub.flavor_uuid);
-        if (!flavorInfo) continue;
-
-        // 查找 VM 类型的价格（不含系统盘和网络）
-        const vmPrice = (sub.orderItemPrices || []).find(
-          (p: any) => p.resourceType === "VM"
-        );
-
-        result.prices.push({
-          productName: `弹性云主机 ${flavorInfo.spec_name}`,
-          specification: `${flavorInfo.cpu}核 ${flavorInfo.mem}GB ${flavorInfo.cpuinfo} ${flavorInfo.flavorType}`,
-          billingMode: "包年包月",
-          price: vmPrice ? vmPrice.finalPrice : sub.finalPrice,
-          unit: "元/月",
-          currency: "CNY",
-          region: defaultRegion.name,
-          source: priceUrl,
-          note: "仅计算实例费用，不含系统盘和网络",
-        });
-      }
-
-      result.dataStatus = result.prices.length > 0 ? "complete" : "no_data";
+      return await this.getEcsPrice(options);
     } catch (error) {
       result.dataStatus = "no_data";
       result.note = `价格查询失败：${error instanceof Error ? error.message : String(error)}`;
+    }
+
+    return result;
+  }
+
+  /**
+   * 查询 ECS 价格（默认地域为扬州）
+   */
+  private async getEcsPrice(options?: PriceQueryOptions): Promise<PriceResult> {
+    const priceUrl = "https://console.ctyun.cn/console/compute/api/proxyv3/querynew/";
+    const result: PriceResult = {
+      provider: this.provider,
+      name: this.name,
+      prices: [],
+      source: priceUrl,
+      updateDate: new Date().toISOString().split("T")[0],
+    };
+
+    // 1. 获取 cookie
+    const cookie = await this.getCtyunCookie();
+
+    // 2. 获取地域列表，优先使用扬州
+    const regions = await this.getRegionList();
+    const keywordRegion = options?.keyword ? this.findRegionByKeyword(regions, options.keyword) : null;
+    const targetRegion = keywordRegion || this.findRegionByKeyword(regions, "扬州") || regions[0];
+    if (!targetRegion) {
+      result.dataStatus = "no_data";
+      result.note = "获取地域列表失败";
+      return result;
+    }
+
+    // 3. 获取 flavor 映射
+    const flavorMap = await this.getFlavorMap(targetRegion.id);
+    if (flavorMap.size === 0) {
+      result.dataStatus = "no_data";
+      result.note = `获取规格映射失败，无法查询地域 ${targetRegion.name} 的价格`;
+      return result;
+    }
+
+    // 4. 构造 flavorsInfo 数组
+    const flavorsInfo: Array<{
+      spec_name: string;
+      cpu: number;
+      mem: number;
+      flavor_uuid: string;
+      flavorType: string;
+      cpuinfo: string;
+    }> = [];
+    for (const [_, info] of flavorMap) {
+      flavorsInfo.push(info);
+    }
+
+    // 5. 调用 proxyv3/querynew 获取价格
+    const priceRes = await this.fetchWithRetry(priceUrl, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        "Referer": `${BASE_URL}/`,
+        "Accept": "application/json",
+        "Cookie": `ct_tgc=${cookie}`,
+      },
+      body: JSON.stringify({
+        billMode: 1,
+        regionId: targetRegion.id,
+        resourceType: "ecs_flavor",
+        flavorsInfo,
+        cycleCnt: 1,
+        cycleType: "M",
+      }),
+    });
+    const priceRaw = await priceRes.json() as any;
+
+    // 6. 解析响应
+    const returnObj = priceRaw.returnObj;
+    if (!returnObj || priceRaw.statusCode !== 800) {
+      result.dataStatus = "no_data";
+      result.note = `价格查询失败：${priceRaw.message || "未知错误"}`;
+      return result;
+    }
+
+    const subOrders = returnObj.subOrderPrices || [];
+    for (const sub of subOrders) {
+      const flavorInfo = flavorMap.get(sub.flavor_uuid);
+      if (!flavorInfo) continue;
+
+      // 查找 VM 类型的价格（不含系统盘和网络）
+      const vmPrice = (sub.orderItemPrices || []).find(
+        (p: any) => p.resourceType === "VM"
+      );
+
+      result.prices.push({
+        productName: `弹性云主机 ${flavorInfo.spec_name}`,
+        specification: `${flavorInfo.cpu}核 ${flavorInfo.mem}GB ${flavorInfo.cpuinfo} ${flavorInfo.flavorType}`,
+        billingMode: "包年包月",
+        price: vmPrice ? vmPrice.finalPrice : sub.finalPrice,
+        unit: "元/月",
+        currency: "CNY",
+        region: targetRegion.name,
+        source: priceUrl,
+        note: "仅计算实例费用，不含系统盘和网络",
+      });
+    }
+
+    result.dataStatus = result.prices.length > 0 ? "complete" : "no_data";
+    return result;
+  }
+
+  /**
+   * 查询天翼云电脑价格（默认地域为扬州）
+   */
+  private async getDesktopPrice(options?: PriceQueryOptions): Promise<PriceResult> {
+    const result: PriceResult = {
+      provider: this.provider,
+      name: this.name,
+      prices: [],
+      source: "https://desk.ctyun.cn:8816/api/selforder/paas/queryPrice",
+      updateDate: new Date().toISOString().split("T")[0],
+    };
+
+    try {
+      // 1. 获取云电脑地域列表
+      const deskRegions = await this.getDeskRegionList();
+      const keywordRegion = options?.keyword ? this.findRegionByKeyword(deskRegions, options.keyword) : null;
+      const targetRegion = keywordRegion || this.findRegionByKeyword(deskRegions, "扬州") || deskRegions[0];
+      if (!targetRegion) {
+        result.dataStatus = "no_data";
+        result.note = "获取云电脑地域列表失败";
+        return result;
+      }
+
+      // 2. 获取云电脑产品规格
+      const products = await this.getDesktopProducts(targetRegion.id);
+      if (!products || products.length === 0) {
+        result.dataStatus = "no_data";
+        result.note = `获取云电脑产品规格失败（地域：${targetRegion.name}）`;
+        return result;
+      }
+
+      // 3. 遍历规格，查询价格
+      const cycleTypes = [3, 5]; // 3=月, 5=小时
+      const cycleLabels: Record<number, string> = { 3: "包月", 5: "按小时" };
+      const cycleUnits: Record<number, string> = { 3: "元/月", 5: "元/小时" };
+
+      for (const product of products) {
+        for (const series of product.series || []) {
+          for (const sku of series.sku || []) {
+            // 提取规格模板（tplId）
+            const tplAttr = (series.attrs || []).find((a: any) => a.attrKey === "tplId");
+            const tplVals = tplAttr?.attrVals || [];
+
+            // 提取系统盘配置
+            const sysDiskSizeAttr = (series.attrs || []).find((a: any) => a.attrKey === "sysDiskSize");
+            const sysDiskTypeAttr = (series.attrs || []).find((a: any) => a.attrKey === "sysDiskType");
+            const sysDiskSize = sysDiskSizeAttr?.attrVal || "80";
+            const sysDiskType = sysDiskTypeAttr?.attrVal || "SAS";
+
+            // 提取数据盘配置
+            const dataDiskTypeAttr = (series.attrs || []).find((a: any) => a.attrKey === "dataDiskType");
+            const dataDiskSizeAttr = (series.attrs || []).find((a: any) => a.attrKey === "dataDiskSize");
+            const dataDiskSize = dataDiskSizeAttr?.attrVal || "0";
+
+            for (const tpl of tplVals) {
+              for (const cycleType of cycleTypes) {
+                const skuConfig = {
+                  attrs: [
+                    { attrKey: "cycleType", attrVal: cycleType },
+                    { attrKey: "cycleCnt", attrVal: 1 },
+                  ],
+                  prodId: sku.prodId,
+                  prodType: "busidesktop",
+                  execSort: 1,
+                  resItems: [{
+                    resType: "ecs",
+                    tag: "master",
+                    itemDefName: tpl.attrVal,
+                    size: 1,
+                    attrs: [],
+                    resItems: [{
+                      resType: "ebs",
+                      tag: "sysDisk",
+                      itemDefName: sysDiskType,
+                      size: parseInt(sysDiskSize),
+                    }],
+                  }],
+                };
+
+                // 如果有数据盘配置，添加数据盘
+                if (dataDiskTypeAttr && dataDiskSizeAttr) {
+                  const dataDiskTypes = dataDiskTypeAttr.attrVals || [{ attrVal: dataDiskTypeAttr.attrVal || "SAS", attrName: dataDiskTypeAttr.attrVal || "高IO" }];
+                  for (const ddType of dataDiskTypes) {
+                    const skuWithDataDisk = {
+                      ...skuConfig,
+                      resItems: [{
+                        ...skuConfig.resItems[0],
+                        resItems: [
+                          ...skuConfig.resItems[0].resItems,
+                          {
+                            resType: "ebs",
+                            tag: "dataDisk",
+                            itemDefName: ddType.attrVal,
+                            size: parseInt(dataDiskSize),
+                          },
+                        ],
+                      }],
+                    };
+
+                    const prices = await this.queryDesktopPrice(targetRegion.id, skuWithDataDisk);
+                    for (const p of prices) {
+                      result.prices.push({
+                        productName: `${series.prodName} ${tpl.attrName}`,
+                        specification: `${series.prodName} ${tpl.attrName} / 系统盘 ${sysDiskSize}GB ${sysDiskType} / 数据盘 ${dataDiskSize}GB ${ddType.attrName}`,
+                        billingMode: cycleLabels[cycleType],
+                        price: p.finalPrice,
+                        unit: cycleUnits[cycleType],
+                        currency: "CNY",
+                        region: targetRegion.name,
+                        source: "https://desk.ctyun.cn:8816/api/selforder/paas/queryPrice",
+                      });
+                    }
+                  }
+                } else {
+                  // 无数据盘
+                  const prices = await this.queryDesktopPrice(targetRegion.id, skuConfig);
+                  for (const p of prices) {
+                    result.prices.push({
+                      productName: `${series.prodName} ${tpl.attrName}`,
+                      specification: `${series.prodName} ${tpl.attrName} / 系统盘 ${sysDiskSize}GB ${sysDiskType}`,
+                      billingMode: cycleLabels[cycleType],
+                      price: p.finalPrice,
+                      unit: cycleUnits[cycleType],
+                      currency: "CNY",
+                      region: targetRegion.name,
+                      source: "https://desk.ctyun.cn:8816/api/selforder/paas/queryPrice",
+                    });
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+
+      result.dataStatus = result.prices.length > 0 ? "complete" : "no_data";
+      result.message = `天翼云电脑（政企版）价格查询完成，共 ${result.prices.length} 条价格记录（地域：${targetRegion.name}）`;
+    } catch (error) {
+      result.dataStatus = "no_data";
+      result.note = `云电脑价格查询失败：${error instanceof Error ? error.message : String(error)}`;
     }
 
     return result;
