@@ -1,5 +1,5 @@
 import * as cheerio from "cheerio";
-import { CloudDocAdapter, type Product, type TocItem, type SearchResult, type PageMetadata, type PriceItem, type PriceResult, type TocOptions, type PriceQueryOptions } from "./base.js";
+import { CloudDocAdapter, type Product, type TocItem, type SearchResult, type PageMetadata, type PriceItem, type PriceResult, type PaginatedResult, type ListProductsOptions, type TocOptions, type PriceQueryOptions } from "./base.js";
 import { htmlToMarkdown } from "../utils/html-to-md.js";
 
 const BASE_URL = "https://help.aliyun.com";
@@ -54,7 +54,7 @@ export class AliyunAdapter extends CloudDocAdapter {
    *
    * 根 llms.txt 中产品级条目指向 /zh/{productId}/llms.txt
    */
-  async listProducts(): Promise<Product[]> {
+  async listProducts(options?: ListProductsOptions): Promise<PaginatedResult<Product>> {
     const text = await this.fetchText(`${BASE_URL}/llms.txt`);
     const entries = this.parseLlmsTxt(text);
 
@@ -70,19 +70,21 @@ export class AliyunAdapter extends CloudDocAdapter {
           products.push({
             productId,
             name: entry.title,
-            description: entry.description,
           });
         }
       }
     }
 
-    return products;
+    const filtered = this.filterByKeywords(products, options?.keyword);
+    const page = options?.page ?? 1;
+    const pageSize = options?.pageSize ?? 100;
+    return this.paginate(filtered, page, pageSize);
   }
 
   /**
    * 从产品级 llms.txt 获取文档目录
    */
-  async getDocumentToc(productId: string, options?: TocOptions): Promise<TocItem[]> {
+  async getDocumentToc(productId: string, options?: TocOptions): Promise<PaginatedResult<TocItem>> {
     const text = await this.fetchText(`${BASE_URL}/zh/${productId}/llms.txt`);
     const entries = this.parseLlmsTxt(text);
 
@@ -100,14 +102,16 @@ export class AliyunAdapter extends CloudDocAdapter {
     if (options?.keyword) {
       const keywords = options.keyword.trim().split(/\s+/).filter(Boolean);
       if (keywords.length > 0) {
-        return items.filter(item => {
+        return this.paginate(items.filter(item => {
           const text = (item.title || "").toLowerCase();
           return keywords.every(kw => text.includes(kw.toLowerCase()));
-        });
+        }), options?.page, options?.pageSize);
       }
     }
 
-    return items;
+    const page = options?.page ?? 1;
+    const pageSize = options?.pageSize ?? 200;
+    return this.paginate(items, page, pageSize);
   }
 
   /**
@@ -363,6 +367,28 @@ export class AliyunAdapter extends CloudDocAdapter {
       source: productId ? `${BASE_URL}/zh/${productId}/billing` : `${BASE_URL}/price`,
       updateDate,
       dataStatus: prices.length > 0 && prices[0].price > 0 ? "complete" : "no_price",
+    };
+  }
+
+  private filterByKeywords<T extends { name?: string; title?: string }>(items: T[], keyword?: string): T[] {
+    if (!keyword) return items;
+    const keywords = keyword.trim().split(/\s+/).filter(Boolean);
+    if (keywords.length === 0) return items;
+    return items.filter(item => {
+      const text = (item.name || item.title || "").toLowerCase();
+      return keywords.every(kw => text.includes(kw.toLowerCase()));
+    });
+  }
+
+  private paginate<T>(items: T[], page: number = 1, pageSize: number = 100): PaginatedResult<T> {
+    const start = (page - 1) * pageSize;
+    const paged = items.slice(start, start + pageSize);
+    return {
+      items: paged,
+      total: items.length,
+      page,
+      pageSize,
+      hasMore: start + pageSize < items.length,
     };
   }
 }

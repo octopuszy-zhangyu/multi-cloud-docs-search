@@ -167,10 +167,10 @@ export abstract class CloudDocAdapter {
   }
 
   /** 获取所有产品文档列表 */
-  abstract listProducts(options?: ListProductsOptions): Promise<Product[] | PaginatedResult<Product>>;
+  abstract listProducts(options?: ListProductsOptions): Promise<PaginatedResult<Product>>;
 
   /** 获取指定产品的文档目录树 */
-  abstract getDocumentToc(productId: string, options?: TocOptions): Promise<TocItem[] | PaginatedResult<TocItem>>;
+  abstract getDocumentToc(productId: string, options?: TocOptions): Promise<PaginatedResult<TocItem>>;
 
   /** 在产品文档中搜索关键词 */
   abstract searchDocuments(productId: string, keyword: string): Promise<SearchResult[]>;

@@ -10,6 +10,115 @@
 - 本地 stdio 模式运行（`tsx` 直接执行）
 - 保留 Cloudflare Workers 兼容性（`src/index.ts`），但不部署
 
+## 适配器统一规范（重要）
+
+所有适配器必须严格遵循以下规范，确保行为一致、可调试。
+
+### 返回类型规范
+
+| 方法 | 基类签名 | 必须返回类型 | 违规厂商 |
+|------|---------|------------|---------|
+| `listProducts` | `(options?: ListProductsOptions) => Promise<Product[] \| PaginatedResult<Product>>` | **必须返回 `PaginatedResult<Product>`** | ❌ aliyun（返回 `Product[]`） |
+| `getDocumentToc` | `(productId: string, options?: TocOptions) => Promise<TocItem[] \| PaginatedResult<TocItem>>` | **必须返回 `PaginatedResult<TocItem>`** | ❌ aliyun、huawei、bailian（返回 `TocItem[]`） |
+| `searchDocuments` | `(productId: string, keyword: string) => Promise<SearchResult[]>` | **必须返回 `SearchResult[]`** | ✅ 全部合规 |
+| `getPageMetadata` | `(pageId: string) => Promise<PageMetadata>` | **必须返回 `PageMetadata`** | ✅ 全部合规 |
+| `getPageContent` | `(contentPath: string) => Promise<string>` | **必须返回 `string`** | ✅ 全部合规 |
+| `getProductPrice` | `(productId?: string, options?: PriceQueryOptions) => Promise<PriceResult>` | **必须返回 `PriceResult`** | ✅ 全部合规 |
+
+### contentPath 规范
+
+`getPageMetadata` 返回的 `contentPath` 必须遵循以下规则：
+
+| 厂商 | contentPath 格式 | 传给 get_page_content 方式 | 说明 |
+|------|-----------------|--------------------------|------|
+| ctyun | 相对路径（如 `/document/10027004/10028086`） | 直接传 | stdio.ts 中自动补全为完整 URL |
+| aliyun | 完整 URL（如 `https://help.aliyun.com/zh/ecs/...`） | 直接传 | 已在 getPageMetadata 中补全 |
+| volcengine | `productId/docId`（如 `6396/12345`） | 直接传 | 特殊格式，getPageContent 内部解析 |
+| tencent | 完整 URL（如 `https://cloud.tencent.com/...`） | 直接传 | 已在 getPageMetadata 中补全 |
+| huawei | 完整 URL（如 `https://support.huaweicloud.com/...`） | 直接传 | 已在 getPageMetadata 中补全 |
+| ecloud | hash 字符串（如 `60daff9598d5c8fe58d847009f94c256`） | 直接传 | 特殊格式，getPageContent 内部解析 |
+| cucloud | 完整 URL（如 `https://support.cucloud.cn/document/123.html`） | 直接传 | 已在 getPageMetadata 中补全 |
+| deepseek | 完整 URL（如 `https://api-docs.deepseek.com/...`） | 直接传 | 已在 getPageMetadata 中补全 |
+| glm | 相对路径（如 `/cn/guide/start/quick-start`） | 直接传 | stdio.ts 中自动补全为完整 URL |
+| minimax | 完整 URL（如 `https://platform.minimaxi.com/...`） | 直接传 | 已在 getPageMetadata 中补全 |
+| kimi | 完整 URL（如 `https://platform.kimi.com/...`） | 直接传 | 已在 getPageMetadata 中补全 |
+| baidu | 完整 URL（如 `https://cloud.baidu.com/doc/...`） | 直接传 | 已在 getPageMetadata 中补全 |
+| bailian | 完整 URL（如 `https://help.aliyun.com/...`） | 直接传 | 已在 getPageMetadata 中补全 |
+
+**规范要求：** 所有适配器的 `getPageMetadata` 应返回可直接使用的 contentPath。对于返回相对路径的适配器，在 stdio.ts 的 `get_page_metadata` 工具中统一补全为完整 URL。特殊格式（volcengine、ecloud）保持原样。
+
+### pageId 格式规范
+
+| 厂商 | pageId 格式 | 示例 |
+|------|------------|------|
+| ctyun | 纯数字 | `10028086` |
+| aliyun | 文档路径 | `/zh/ecs/user-guide/what-is-ecs` |
+| volcengine | `productId/docId` | `6396/12345` |
+| tencent | `productId/pageId` | `213/495` |
+| huawei | `productId/docPath` | `ecs/productdesc-ecs/ecs_01_0073` |
+| ecloud | 纯数字 | `41800` |
+| cucloud | 纯数字 | `12345` |
+| deepseek | 路径（以 `/` 开头） | `/quick_start/pricing` |
+| glm | 路径（以 `/` 开头） | `/cn/guide/start/quick-start` |
+| minimax | 路径（以 `/` 开头） | `/docs/api-reference/models/...` |
+| kimi | 路径（以 `/` 开头） | `/docs/pricing/chat-k26` |
+| baidu | `productId/s/SLUG` | `BCC/s/8kbbkwg4p` |
+| bailian | 路径（以 `/` 开头） | `/zh/model-studio/billing` |
+
+### 私有辅助方法命名规范
+
+所有适配器必须使用以下统一的私有方法命名：
+
+| 方法 | 签名 | 用途 |
+|------|------|------|
+| `filterByKeywords` | `<T extends { name?: string; title?: string }>(items: T[], keyword?: string): T[]` | 按空格分隔的关键词 AND 逻辑过滤 |
+| `paginate` | `<T>(items: T[], page?: number, pageSize?: number): PaginatedResult<T>` | 数组分页包装 |
+| `parsePriceTable` | `(markdown: string, source?: string): PriceItem[]` | 从 Markdown 表格解析价格 |
+
+**违规厂商：**
+- ❌ aliyun：缺少 `filterByKeywords` 和 `paginate`（内联实现）
+- ❌ huawei：缺少 `filterByKeywords` 和 `paginate`（内联实现）
+- ❌ bailian：缺少 `filterByKeywords` 和 `paginate`（内联实现）
+- ❌ deepseek：`filterByKeywords` 和 `paginate` 为私有方法（正确）
+- ❌ glm：`filterByKeywords` 和 `paginate` 为私有方法（正确）
+- ❌ minimax：`filterByKeywords` 和 `paginate` 为私有方法（正确）
+- ❌ kimi：`filterByKeywords` 和 `paginate` ��私有方法（正确）
+- ❌ baidu：`filterByKeywords` 和 `paginate` 为私有方法（正确）
+
+### 错误处理规范
+
+所有适配器方法必须遵循以下错误处理规则：
+
+1. **网络请求失败**：使用基类 `fetchWithRetry`（自动重试 2 次），失败时抛出 Error
+2. **数据解析失败**：捕获异常并继续（不中断整体流程），如 `getProductPrice` 中单个页面解析失败
+3. **空结果处理**：返回空数组/空对象，不抛出异常
+4. **无效参数**：`getProductPrice` 无 `productId` 时返回空 `PriceResult`（`prices: []`）
+
+### 价格获取规范
+
+`getProductPrice` 方法必须：
+
+1. 返回 `PriceResult` 类型，包含 `dataStatus` 字段
+2. `dataStatus` 取值：`"complete"` | `"partial"` | `"no_price"` | `"no_data"`
+3. 价格数据来源标注在 `source` 字段
+4. 无价格数据时提供明确的引导提示（`note` 字段）
+
+### 新增适配器检查清单
+
+新增云厂商适配器时，必须逐项检查：
+
+- [ ] 实现全部 6 个抽象方法
+- [ ] `listProducts` 返回 `PaginatedResult<Product>`
+- [ ] `getDocumentToc` 返回 `PaginatedResult<TocItem>`
+- [ ] `searchDocuments` 返回 `SearchResult[]`
+- [ ] `getPageMetadata` 返回 `PageMetadata`（contentPath 可被 stdio.ts 消费）
+- [ ] `getPageContent` 返回 Markdown 格式字符串
+- [ ] `getProductPrice` 返回 `PriceResult`（含 dataStatus）
+- [ ] 包含 `filterByKeywords`、`paginate`、`parsePriceTable` 三个私有方法
+- [ ] 在 `adapters/index.ts` 注册
+- [ ] 在 `stdio.ts` 的 instructions 中添加厂商说明
+- [ ] 在 CLAUDE.md 的厂商列表和价格策略表中添加记录
+
 ## 项目架构
 
 ```
@@ -241,3 +350,59 @@ get_product_price_quick({ provider: "huawei", productId: "ecs" })
 - 所有 6 个工具都必须返回正确结果
 - 检查返回数据格式是否符合预期
 - 确保新增云厂商适配器后测试覆盖所有工具
+
+## 开发工作流规范
+
+### 全流程穿测（必须）
+
+每次修改项目后，必须执行以下全流程穿测，确保基础功能和修改功能完全正常：
+
+1. **编译检查**：`npx tsc --noEmit` 确保无类型错误（`test-fix.ts` 的预存错误除外）
+2. **启动服务**：`npm run start` 确认 MCP Server 正常启动（stdio 模式）
+3. **核心功能穿测**：使用 MCP Inspector 或直接调用工具，覆盖以下场景：
+   - 至少 1 个传统云厂商（如 ctyun）的完整链路：`list_products` → `get_document_toc` → `search_documents` → `get_page_metadata` → `get_page_content`
+   - 至少 1 个 AI 厂商（如 deepseek）的完整链路
+   - 至少 1 个厂商的价格查询：`get_product_price` 或 `get_product_price_quick`
+4. **修改专项测试**：对本次修改的函数进行针对性测试
+   - 修改了返回类型 → 验证返回的 JSON 结构包含 `items`/`total`/`page`/`pageSize`/`hasMore`
+   - 修改了 contentPath → 验证 `get_page_metadata` 返回的 contentPath 可被 `get_page_content` 消费
+   - 修改了价格逻辑 → 验证 `get_product_price` 返回的 `dataStatus` 字段正确
+5. **回归测试**：确保未修改的厂商功能不受影响
+
+### 提交规范
+
+每次修改完项目后，必须自行 commit，commit message 需详细说明修改点及缘由：
+
+```bash
+# 格式
+git add <files>
+git commit -m "类型: 简短描述
+
+## 修改内容
+- 修改点1：具体说明
+- 修改点2：具体说明
+
+## 修改缘由
+- 缘由1：为什么这样改
+- 缘由2：解决了什么问题
+
+## 影响范围
+- 影响的厂商/模块
+- 是否需要更新文档"
+```
+
+**commit 类型前缀：**
+| 前缀 | 用途 |
+|------|------|
+| `feat` | 新增功能/适配器 |
+| `fix` | 修复 bug |
+| `refactor` | 重构（不改变外部行为） |
+| `style` | 代码风格调整 |
+| `docs` | 文档更新 |
+| `chore` | 构建/工具链变更 |
+
+**禁止行为：**
+- ❌ 不允许 `git commit -m "fix bug"` 这种无意义 message
+- ❌ 不允许跳过测试直接 commit
+- ❌ 不允许一次性 commit 大量无关修改（应拆分）
+

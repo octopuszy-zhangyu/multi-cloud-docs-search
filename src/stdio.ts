@@ -2,7 +2,7 @@ import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
 import { z } from "zod";
 import { getAdapter } from "./adapters/index.js";
-import type { PaginatedResult, Product, TocItem } from "./adapters/base.js";
+import type { Product } from "./adapters/base.js";
 
 /** 关键词过滤函数（AND 逻辑，多个空格分隔的关键词必须全部匹配） */
 function filterByKeywords<T extends { name?: string; title?: string }>(
@@ -14,30 +14,6 @@ function filterByKeywords<T extends { name?: string; title?: string }>(
     const text = (item.name || item.title || "").toLowerCase();
     return keywords.every((kw) => text.includes(kw.toLowerCase()));
   });
-}
-
-/** 统一格式化分页结果 */
-function formatPaginatedResult<T>(
-  result: T[] | PaginatedResult<T>,
-  defaultPageSize: number = 100
-): { text: string; total: number; page: number; pageSize: number; hasMore: boolean } {
-  if ("items" in result) {
-    return {
-      text: JSON.stringify(result.items, null, 2),
-      total: result.total,
-      page: result.page,
-      pageSize: result.pageSize,
-      hasMore: result.hasMore,
-    };
-  }
-  const items = result as T[];
-  return {
-    text: JSON.stringify(items, null, 2),
-    total: items.length,
-    page: 1,
-    pageSize: defaultPageSize,
-    hasMore: false,
-  };
 }
 
 const server = new McpServer(
@@ -283,25 +259,11 @@ server.registerTool(
       const keywords = keyword ? keyword.trim().split(/\s+/).filter(Boolean) : [];
       const result = await adapter.listProducts({ keyword, page, pageSize });
 
-      let items: Product[];
-      let total: number;
-      let currentPage: number;
-      let currentPageSize: number;
-      let hasMore: boolean;
-
-      if ("items" in result) {
-        items = result.items;
-        total = result.total;
-        currentPage = result.page;
-        currentPageSize = result.pageSize;
-        hasMore = result.hasMore;
-      } else {
-        items = result as Product[];
-        total = items.length;
-        currentPage = 1;
-        currentPageSize = pageSize || 100;
-        hasMore = false;
-      }
+      const items = result.items;
+      const total = result.total;
+      const currentPage = result.page;
+      const currentPageSize = result.pageSize;
+      const hasMore = result.hasMore;
 
       if (keywords.length > 0) {
         const filtered = filterByKeywords(items, keywords);
@@ -369,32 +331,18 @@ server.registerTool(
       const keywords = keyword ? keyword.trim().split(/\s+/).filter(Boolean) : [];
       const result = await adapter.getDocumentToc(productId, { keyword, page, pageSize, topOnly });
 
-      let items: TocItem[];
-      let total: number;
-      let currentPage: number;
-      let currentPageSize: number;
-      let hasMore: boolean;
+      const items = result.items;
+      const total = result.total;
+      const currentPage = result.page;
+      const currentPageSize = result.pageSize;
+      const hasMore = result.hasMore;
 
-      if ("items" in result) {
-        items = result.items;
-        total = result.total;
-        currentPage = result.page;
-        currentPageSize = result.pageSize;
-        hasMore = result.hasMore;
-      } else {
-        items = result as TocItem[];
-        total = items.length;
-        currentPage = 1;
-        currentPageSize = pageSize || 50;
-        hasMore = false;
-      }
-
-      if (topOnly) {
-        items = items.map(item => ({ pageId: item.pageId, title: item.title }));
-      }
+      const topItems = topOnly
+        ? items.map(item => ({ pageId: item.pageId, title: item.title }))
+        : items;
 
       if (keywords.length > 0) {
-        const filtered = filterByKeywords(items, keywords);
+        const filtered = filterByKeywords(topItems, keywords);
         return {
           content: [{
             type: "text",
@@ -416,7 +364,7 @@ server.registerTool(
         content: [{
           type: "text",
           text: JSON.stringify({
-            items,
+            items: topItems,
             total,
             page: currentPage,
             pageSize: currentPageSize,

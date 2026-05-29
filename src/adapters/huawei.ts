@@ -1,5 +1,5 @@
 import * as cheerio from "cheerio";
-import { CloudDocAdapter, type Product, type TocItem, type SearchResult, type PageMetadata, type PriceItem, type PriceResult, type TocOptions, type PriceQueryOptions } from "./base.js";
+import { CloudDocAdapter, type Product, type TocItem, type SearchResult, type PageMetadata, type PriceItem, type PriceResult, type PaginatedResult, type ListProductsOptions, type TocOptions, type PriceQueryOptions } from "./base.js";
 import { htmlToMarkdown } from "../utils/html-to-md.js";
 
 const BASE_URL = "https://support.huaweicloud.com";
@@ -38,7 +38,7 @@ export class HuaweiAdapter extends CloudDocAdapter {
     return res.json() as Promise<T>;
   }
 
-  async listProducts(): Promise<Product[]> {
+  async listProducts(options?: ListProductsOptions): Promise<PaginatedResult<Product>> {
     const data = await this.fetchPortalApi<{ data: HuaweiCategory[] }>(PRODUCTS_API);
     const products: Product[] = [];
     const seen = new Set<string>();
@@ -50,16 +50,18 @@ export class HuaweiAdapter extends CloudDocAdapter {
           products.push({
             productId: product.code,
             name: product.title,
-            description: product.description,
           });
         }
       }
     }
 
-    return products;
+    const filtered = this.filterByKeywords(products, options?.keyword);
+    const page = options?.page ?? 1;
+    const pageSize = options?.pageSize ?? 100;
+    return this.paginate(filtered, page, pageSize);
   }
 
-  async getDocumentToc(productId: string, options?: TocOptions): Promise<TocItem[]> {
+  async getDocumentToc(productId: string, options?: TocOptions): Promise<PaginatedResult<TocItem>> {
     const url = `${BASE_URL}/${productId}/v3_support_leftmenu_fragment.html`;
     const html = await this.fetchHtml(url);
     const $ = cheerio.load(html);
@@ -90,19 +92,22 @@ export class HuaweiAdapter extends CloudDocAdapter {
     if (options?.keyword) {
       const keywords = options.keyword.trim().split(/\s+/).filter(Boolean);
       if (keywords.length > 0) {
-        return items.filter(item => {
+        return this.paginate(items.filter(item => {
           const text = (item.title || "").toLowerCase();
           return keywords.every(kw => text.includes(kw.toLowerCase()));
-        });
+        }), options?.page, options?.pageSize);
       }
     }
 
-    return items;
+    const page = options?.page ?? 1;
+    const pageSize = options?.pageSize ?? 200;
+    return this.paginate(items, page, pageSize);
   }
 
   async searchDocuments(productId: string, keyword: string): Promise<SearchResult[]> {
     // 华为云没有公开的搜索 API，通过遍历文档目录做本地关键词匹配
-    const toc = await this.getDocumentToc(productId);
+    const tocResult = await this.getDocumentToc(productId);
+    const toc = tocResult.items;
     const lowerKeyword = keyword.toLowerCase();
 
     return toc
@@ -659,5 +664,27 @@ export class HuaweiAdapter extends CloudDocAdapter {
     }
 
     return prices;
+  }
+
+  private filterByKeywords<T extends { name?: string; title?: string }>(items: T[], keyword?: string): T[] {
+    if (!keyword) return items;
+    const keywords = keyword.trim().split(/\s+/).filter(Boolean);
+    if (keywords.length === 0) return items;
+    return items.filter(item => {
+      const text = (item.name || item.title || "").toLowerCase();
+      return keywords.every(kw => text.includes(kw.toLowerCase()));
+    });
+  }
+
+  private paginate<T>(items: T[], page: number = 1, pageSize: number = 100): PaginatedResult<T> {
+    const start = (page - 1) * pageSize;
+    const paged = items.slice(start, start + pageSize);
+    return {
+      items: paged,
+      total: items.length,
+      page,
+      pageSize,
+      hasMore: start + pageSize < items.length,
+    };
   }
 }
