@@ -451,7 +451,7 @@ export class CtyunAdapter extends CloudDocAdapter {
    *
    * ECS 流程：
    * 1. 获取 ct_tgc cookie
-   * 2. 获取地域列表（默认使用扬州地域）
+   * 2. 获取地域列表（默认使用华东1地域）
    * 3. 获取 flavor UUID 映射
    * 4. 构造 flavorsInfo 数组，调用 proxyv3/querynew API
    * 5. 解析响应，输出为 PriceItem[]
@@ -500,7 +500,7 @@ export class CtyunAdapter extends CloudDocAdapter {
   }
 
   /**
-   * 查询 ECS 价格（默认地域为扬州）
+   * 查询 ECS 价格（默认地域为华东1）
    */
   private async getEcsPrice(options?: PriceQueryOptions): Promise<PriceResult> {
     const priceUrl = "https://console.ctyun.cn/console/compute/api/proxyv3/querynew/";
@@ -518,7 +518,7 @@ export class CtyunAdapter extends CloudDocAdapter {
     // 2. 获取地域列表，优先使用扬州
     const regions = await this.getRegionList();
     const keywordRegion = options?.keyword ? this.findRegionByKeyword(regions, options.keyword) : null;
-    const targetRegion = keywordRegion || this.findRegionByKeyword(regions, "扬州") || regions[0];
+    const targetRegion = keywordRegion || this.findRegionByKeyword(regions, "华东1") || regions[0];
     if (!targetRegion) {
       result.dataStatus = "no_data";
       result.note = "获取地域列表失败";
