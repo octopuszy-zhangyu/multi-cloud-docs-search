@@ -123,7 +123,6 @@ export class KimiAdapter extends CloudDocAdapter {
     return {
       pageId,
       title,
-      note: description,
       contentPath: url,
       updateDate: undefined,
     };
@@ -257,12 +256,9 @@ export class KimiAdapter extends CloudDocAdapter {
 
           prices.push({
             productName,
-            specification,
             billingMode,
             price: priceNum,
             unit: normalizedUnit,
-            currency: "CNY",
-            source: "文档定价页面",
           });
         }
       }
@@ -303,12 +299,9 @@ export class KimiAdapter extends CloudDocAdapter {
           if (!isNaN(price)) {
             prices.push({
               productName,
-              specification: spec,
               billingMode: "按量",
               price,
               unit: "元/百万Token",
-              currency: "CNY",
-              source: "文档定价页面",
             });
           }
         }
@@ -349,6 +342,6 @@ export class KimiAdapter extends CloudDocAdapter {
       }
     }
 
-    return this.makePriceResult(allPrices, `${BASE_URL}/docs/pricing`, { updateDate: undefined });
+    return this.makePriceResult(allPrices, { updateDate: undefined });
   }
 }

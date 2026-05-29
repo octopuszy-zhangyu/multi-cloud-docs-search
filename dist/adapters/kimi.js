@@ -14,15 +14,12 @@ export class KimiAdapter extends CloudDocAdapter {
      * Kimi 只有一个产品：Kimi API 文档
      */
     async listProducts(options) {
-        const allProducts = [
+        return this.paginateProducts([
             {
                 productId: "kimi-api",
                 name: "Kimi API 文档",
-                description: "月之暗面 Kimi 开放平台 API 文档",
             },
-        ];
-        const filtered = this.filterByKeywords(allProducts, options?.keyword);
-        return this.paginate(filtered, options?.page ?? 1, options?.pageSize ?? 100);
+        ], options);
     }
     /**
      * 从 llms.txt 解析文档目录
@@ -107,7 +104,6 @@ export class KimiAdapter extends CloudDocAdapter {
         return {
             pageId,
             title,
-            note: description,
             contentPath: url,
             updateDate: undefined,
         };
@@ -129,34 +125,6 @@ export class KimiAdapter extends CloudDocAdapter {
             .join("\n")
             .trim();
         return cleaned || "(空内容)";
-    }
-    /**
-     * 按关键词过滤条目（AND 逻辑，大小写不敏感）
-     */
-    filterByKeywords(items, keyword) {
-        if (!keyword)
-            return items;
-        const keywords = keyword.trim().split(/\s+/).filter(Boolean);
-        if (keywords.length === 0)
-            return items;
-        return items.filter((item) => {
-            const text = (item.name || item.title || "").toLowerCase();
-            return keywords.every((kw) => text.includes(kw.toLowerCase()));
-        });
-    }
-    /**
-     * 对数组进行分页包装
-     */
-    paginate(items, page = 1, pageSize = 100) {
-        const start = (page - 1) * pageSize;
-        const paged = items.slice(start, start + pageSize);
-        return {
-            items: paged,
-            total: items.length,
-            page,
-            pageSize,
-            hasMore: start + pageSize < items.length,
-        };
     }
     /**
      * 从 React DocTable 组件格式中解析价格数据
@@ -260,12 +228,9 @@ export class KimiAdapter extends CloudDocAdapter {
                     }
                     prices.push({
                         productName,
-                        specification,
                         billingMode,
                         price: priceNum,
                         unit: normalizedUnit,
-                        currency: "CNY",
-                        source: "文档定价页面",
                     });
                 }
             }
@@ -299,12 +264,9 @@ export class KimiAdapter extends CloudDocAdapter {
                     if (!isNaN(price)) {
                         prices.push({
                             productName,
-                            specification: spec,
                             billingMode: "按量",
                             price,
                             unit: "元/百万Token",
-                            currency: "CNY",
-                            source: "文档定价页面",
                         });
                     }
                 }
@@ -340,12 +302,6 @@ export class KimiAdapter extends CloudDocAdapter {
                 continue;
             }
         }
-        return {
-            provider: this.provider,
-            name: this.name,
-            prices: allPrices,
-            source: `${BASE_URL}/docs/pricing`,
-            updateDate: undefined,
-        };
+        return this.makePriceResult(allPrices, { updateDate: undefined });
     }
 }

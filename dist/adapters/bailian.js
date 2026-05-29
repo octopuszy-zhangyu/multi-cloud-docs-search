@@ -5,15 +5,13 @@ const BASE_URL = "https://help.aliyun.com";
 export class BailianAdapter extends CloudDocAdapter {
     provider = "bailian";
     name = "阿里云百炼";
-    async listProducts() {
-        // 百炼产品在阿里云帮助中心的 alias 为 /model-studio
-        return [
+    async listProducts(options) {
+        return this.paginateProducts([
             {
                 productId: "model-studio",
                 name: "大模型服务平台百炼",
-                description: "阿里云百炼大模型服务平台文档",
             },
-        ];
+        ], options);
     }
     async getDocumentToc(productId, options) {
         // 百炼的 product.json API 返回 302 重定向，需从首页 HTML 解析目录
@@ -95,17 +93,20 @@ export class BailianAdapter extends CloudDocAdapter {
         if (options?.keyword) {
             const keywords = options.keyword.trim().split(/\s+/).filter(Boolean);
             if (keywords.length > 0) {
-                return items.filter(item => {
+                return this.paginate(items.filter(item => {
                     const text = (item.title || "").toLowerCase();
                     return keywords.every(kw => text.includes(kw.toLowerCase()));
-                });
+                }), options?.page, options?.pageSize);
             }
         }
-        return items;
+        const page = options?.page ?? 1;
+        const pageSize = options?.pageSize ?? 200;
+        return this.paginate(items, page, pageSize);
     }
     async searchDocuments(productId, keyword) {
         // 遍历目录做本地关键词匹配
-        const toc = await this.getDocumentToc(productId);
+        const tocResult = await this.getDocumentToc(productId);
+        const toc = tocResult.items;
         const lowerKeyword = keyword.toLowerCase();
         return toc
             .filter((item) => item.title.toLowerCase().includes(lowerKeyword))
@@ -125,7 +126,6 @@ export class BailianAdapter extends CloudDocAdapter {
         return {
             pageId,
             title,
-            note: description,
             contentPath: url,
         };
     }
@@ -158,12 +158,9 @@ export class BailianAdapter extends CloudDocAdapter {
                     if (!isNaN(price)) {
                         prices.push({
                             productName,
-                            specification: spec,
                             billingMode: "按量",
                             price,
                             unit: "元/百万Token",
-                            currency: "CNY",
-                            source: "文档定价页面",
                         });
                     }
                 }
@@ -180,12 +177,6 @@ export class BailianAdapter extends CloudDocAdapter {
         const html = await this.fetchHtml(url);
         const markdown = htmlToMarkdown(html);
         const prices = this.parsePriceTable(markdown);
-        return {
-            provider: this.provider,
-            name: this.name,
-            prices,
-            source: url,
-            updateDate: undefined,
-        };
+        return this.makePriceResult(prices, { updateDate: undefined });
     }
 }

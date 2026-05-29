@@ -303,7 +303,7 @@ export class CtyunAdapter extends CloudDocAdapter {
   /**
    * 查询天翼云电脑价格
    */
-  private async queryDesktopPrice(regionUuid: string, skuConfig: any): Promise<{ totalPrice: number; finalPrice: number; productName: string }[]> {
+  private async queryDesktopPrice(regionUuid: string, skuConfig: any): Promise<{ finalPrice: number; items: Array<{ ctyunName: string; finalPrice: number; resourceType: string }> }[]> {
     const cookie = await this.getCtyunCookie();
     const url = "https://desk.ctyun.cn:8816/api/selforder/paas/queryPrice";
     const res = await this.fetchWithRetry(url, {
@@ -326,16 +326,13 @@ export class CtyunAdapter extends CloudDocAdapter {
     if (raw.statusCode !== 800 || !raw.returnObj) {
       return [];
     }
-    const results: { totalPrice: number; finalPrice: number; productName: string }[] = [];
+    const results: { finalPrice: number; items: Array<{ ctyunName: string; finalPrice: number; resourceType: string }> }[] = [];
     const subOrders = raw.returnObj.subOrderPrices || [];
     for (const sub of subOrders) {
-      for (const item of sub.orderItemPrices || []) {
-        results.push({
-          totalPrice: raw.returnObj.totalPrice,
-          finalPrice: item.finalPrice,
-          productName: item.ctyunName || sub.serviceTag,
-        });
-      }
+      results.push({
+        finalPrice: sub.finalPrice,
+        items: sub.orderItemPrices || [],
+      });
     }
     return results;
   }
@@ -417,17 +414,11 @@ export class CtyunAdapter extends CloudDocAdapter {
       else if (lastCell.includes("次")) unit = "次";
       else if (lastCell.includes("GB") || lastCell.includes("G")) unit = "GB";
 
-      // 判断币种
-      const currency = lastCell.includes("$") || lastCell.includes("美元") ? "USD" : "CNY";
-
       prices.push({
         productName,
-        specification: cells.length > 2 ? cells.slice(1, -1).join(" / ") : "",
         billingMode,
         price,
         unit,
-        currency,
-        source,
       });
     }
 
@@ -459,7 +450,6 @@ export class CtyunAdapter extends CloudDocAdapter {
       provider: this.provider,
       name: this.name,
       prices: [],
-      source: "",
       updateDate: new Date().toISOString().split("T")[0],
     };
 
@@ -476,14 +466,12 @@ export class CtyunAdapter extends CloudDocAdapter {
       // ECS（productId=10026730）
       if (productId !== "10026730") {
         result.dataStatus = "no_data";
-        result.note = `暂不支持 productId=${productId} 的价格查询，当前仅支持 ECS（productId=10026730）和云电脑政企版（productId=10027004）`;
         return result;
       }
 
       return await this.getEcsPrice(options);
     } catch (error) {
       result.dataStatus = "no_data";
-      result.note = `价格查询失败：${error instanceof Error ? error.message : String(error)}`;
     }
 
     return result;
@@ -493,25 +481,30 @@ export class CtyunAdapter extends CloudDocAdapter {
    * 查询 ECS 价格（默认地域为华东1）
    */
   private async getEcsPrice(options?: PriceQueryOptions): Promise<PriceResult> {
-    const priceUrl = "https://console.ctyun.cn/console/compute/api/proxyv3/querynew/";
     const result: PriceResult = {
       provider: this.provider,
       name: this.name,
       prices: [],
-      source: priceUrl,
       updateDate: new Date().toISOString().split("T")[0],
     };
 
     // 1. 获取 cookie
     const cookie = await this.getCtyunCookie();
 
-    // 2. 获取地域列表，优先使用扬州
+    // 2. 获取地域列表，优先使用华东1
     const regions = await this.getRegionList();
-    const keywordRegion = options?.keyword ? this.findRegionByKeyword(regions, options.keyword) : null;
+    // 从 keyword 中提取地域关键词（支持多关键字，如 "南京3 按需" 提取 "南京3"）
+    let keywordRegion: { id: string; name: string } | null = null;
+    if (options?.keyword) {
+      const keywords = options.keyword.split(/\s+/).filter(k => k.length > 0);
+      for (const kw of keywords) {
+        keywordRegion = this.findRegionByKeyword(regions, kw);
+        if (keywordRegion) break;
+      }
+    }
     const targetRegion = keywordRegion || this.findRegionByKeyword(regions, "华东1") || regions[0];
     if (!targetRegion) {
       result.dataStatus = "no_data";
-      result.note = "获取地域列表失败";
       return result;
     }
     // 如果 keyword 是地域名但没匹配到，在 message 中提示
@@ -522,7 +515,6 @@ export class CtyunAdapter extends CloudDocAdapter {
     const flavorMap = await this.getFlavorMap(targetRegion.id);
     if (flavorMap.size === 0) {
       result.dataStatus = "no_data";
-      result.note = `获取规格映射失败，无法查询地域 ${targetRegion.name} 的价格`;
       return result;
     }
 
@@ -539,55 +531,73 @@ export class CtyunAdapter extends CloudDocAdapter {
       flavorsInfo.push(info);
     }
 
-    // 5. 调用 proxyv3/querynew 获取价格
-    const priceRes = await this.fetchWithRetry(priceUrl, {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-        "Referer": `${BASE_URL}/`,
-        "Accept": "application/json",
-        "Cookie": `ct_tgc=${cookie}`,
-      },
-      body: JSON.stringify({
-        billMode: 1,
-        regionId: targetRegion.id,
-        resourceType: "ecs_flavor",
-        flavorsInfo,
-        cycleCnt: 1,
-        cycleType: "M",
+    // 5. 并行查询包月和按量价格
+    const [monthlyRes, hourlyRes] = await Promise.all([
+      this.fetchWithRetry("https://console.ctyun.cn/console/compute/api/proxyv3/querynew/", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          "Referer": `${BASE_URL}/`,
+          "Accept": "application/json",
+          "Cookie": `ct_tgc=${cookie}`,
+        },
+        body: JSON.stringify({
+          billMode: 1,
+          regionId: targetRegion.id,
+          resourceType: "ecs_flavor",
+          flavorsInfo,
+          cycleCnt: 1,
+          cycleType: "M",
+        }),
       }),
-    });
-    const priceRaw = await priceRes.json() as any;
+      this.fetchWithRetry("https://console.ctyun.cn/console/compute/api/proxyv3/querynew/", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          "Referer": `${BASE_URL}/`,
+          "Accept": "application/json",
+          "Cookie": `ct_tgc=${cookie}`,
+        },
+        body: JSON.stringify({
+          billMode: 2,
+          regionId: targetRegion.id,
+          resourceType: "ecs_flavor",
+          flavorsInfo,
+          cycleCnt: 1,
+          cycleType: "H",
+        }),
+      }),
+    ]);
 
-    // 6. 解析响应
-    const returnObj = priceRaw.returnObj;
-    if (!returnObj || priceRaw.statusCode !== 800) {
+    const [monthlyRaw, hourlyRaw] = await Promise.all([
+      monthlyRes.json() as Promise<any>,
+      hourlyRes.json() as Promise<any>,
+    ]);
+
+    // 6. 解析包月价格
+    const parsePrices = (raw: any, billingMode: string, unit: string) => {
+      const returnObj = raw?.returnObj;
+      if (!returnObj || raw.statusCode !== 800) return;
+      for (const sub of returnObj.subOrderPrices || []) {
+        const flavorInfo = flavorMap.get(sub.flavor_uuid);
+        if (!flavorInfo) continue;
+        const vmPrice = (sub.orderItemPrices || []).find((p: any) => p.resourceType === "VM");
+        result.prices.push({
+          productName: `弹性云主机 ${flavorInfo.spec_name}`,
+          billingMode,
+          price: vmPrice ? vmPrice.finalPrice : sub.finalPrice,
+          unit,
+          region: targetRegion.name,
+        });
+      }
+    };
+
+    parsePrices(monthlyRaw, "包月", "元/月");
+    parsePrices(hourlyRaw, "按量", "元/小时");
+
+    if (result.prices.length === 0) {
       result.dataStatus = "no_data";
-      result.note = `价格查询失败：${priceRaw.message || "未知错误"}`;
       return result;
-    }
-
-    const subOrders = returnObj.subOrderPrices || [];
-    for (const sub of subOrders) {
-      const flavorInfo = flavorMap.get(sub.flavor_uuid);
-      if (!flavorInfo) continue;
-
-      // 查找 VM 类型的价格（不含系统盘和网络）
-      const vmPrice = (sub.orderItemPrices || []).find(
-        (p: any) => p.resourceType === "VM"
-      );
-
-      result.prices.push({
-        productName: `弹性云主机 ${flavorInfo.spec_name}`,
-        specification: `${flavorInfo.cpu}核 ${flavorInfo.mem}GB ${flavorInfo.cpuinfo} ${flavorInfo.flavorType}`,
-        billingMode: "包年包月",
-        price: vmPrice ? vmPrice.finalPrice : sub.finalPrice,
-        unit: "元/月",
-        currency: "CNY",
-        region: targetRegion.name,
-        source: priceUrl,
-        note: "仅计算实例费用，不含系统盘和网络",
-      });
     }
 
     result.dataStatus = result.prices.length > 0 ? "complete" : "no_data";
@@ -602,18 +612,23 @@ export class CtyunAdapter extends CloudDocAdapter {
       provider: this.provider,
       name: this.name,
       prices: [],
-      source: "https://desk.ctyun.cn:8816/api/selforder/paas/queryPrice",
       updateDate: new Date().toISOString().split("T")[0],
     };
 
     try {
       // 1. 获取云电脑地域列表
       const deskRegions = await this.getDeskRegionList();
-      const keywordRegion = options?.keyword ? this.findRegionByKeyword(deskRegions, options.keyword) : null;
+      let keywordRegion: { id: string; name: string } | null = null;
+      if (options?.keyword) {
+        const keywords = options.keyword.split(/\s+/).filter(k => k.length > 0);
+        for (const kw of keywords) {
+          keywordRegion = this.findRegionByKeyword(deskRegions, kw);
+          if (keywordRegion) break;
+        }
+      }
       const targetRegion = keywordRegion || this.findRegionByKeyword(deskRegions, "扬州") || deskRegions[0];
       if (!targetRegion) {
         result.dataStatus = "no_data";
-        result.note = "获取云电脑地域列表失败";
         return result;
       }
 
@@ -621,36 +636,41 @@ export class CtyunAdapter extends CloudDocAdapter {
       const products = await this.getDesktopProducts(targetRegion.id);
       if (!products || products.length === 0) {
         result.dataStatus = "no_data";
-        result.note = `获取云电脑产品规格失败（地域：${targetRegion.name}）`;
         return result;
       }
 
-      // 3. 遍历规格，查询价格
-      const cycleTypes = [3, 5]; // 3=月, 5=小时
-      const cycleLabels: Record<number, string> = { 3: "包月", 5: "按小时" };
-      const cycleUnits: Record<number, string> = { 3: "元/月", 5: "元/小时" };
+      // 3. 构造所有价格查询任务
+      // cycleType=3=包月, cycleType=5=包年（API 测试显示 5 返回的是年价 91*12=1092，非按小时）
+      const cycleTypes = [3, 5];
+      const cycleLabels: Record<number, string> = { 3: "包月", 5: "包年" };
+      const cycleUnits: Record<number, string> = { 3: "元/月", 5: "元/年" };
+
+      interface PriceTask {
+        skuConfig: any;
+        seriesName: string;
+        tplName: string;
+        cycleType: number;
+        diskType?: string; // SAS/SSD
+      }
+
+      const tasks: PriceTask[] = [];
 
       for (const product of products) {
         for (const series of product.series || []) {
           for (const sku of series.sku || []) {
-            // 提取规格模板（tplId）
             const tplAttr = (series.attrs || []).find((a: any) => a.attrKey === "tplId");
             const tplVals = tplAttr?.attrVals || [];
-
-            // 提取系统盘配置
             const sysDiskSizeAttr = (series.attrs || []).find((a: any) => a.attrKey === "sysDiskSize");
             const sysDiskTypeAttr = (series.attrs || []).find((a: any) => a.attrKey === "sysDiskType");
             const sysDiskSize = sysDiskSizeAttr?.attrVal || "80";
             const sysDiskType = sysDiskTypeAttr?.attrVal || "SAS";
-
-            // 提取数据盘配置
             const dataDiskTypeAttr = (series.attrs || []).find((a: any) => a.attrKey === "dataDiskType");
             const dataDiskSizeAttr = (series.attrs || []).find((a: any) => a.attrKey === "dataDiskSize");
             const dataDiskSize = dataDiskSizeAttr?.attrVal || "0";
 
             for (const tpl of tplVals) {
               for (const cycleType of cycleTypes) {
-                const skuConfig = {
+                const baseConfig = {
                   attrs: [
                     { attrKey: "cycleType", attrVal: cycleType },
                     { attrKey: "cycleCnt", attrVal: 1 },
@@ -673,57 +693,91 @@ export class CtyunAdapter extends CloudDocAdapter {
                   }],
                 };
 
-                // 如果有数据盘配置，添加数据盘
                 if (dataDiskTypeAttr && dataDiskSizeAttr) {
                   const dataDiskTypes = dataDiskTypeAttr.attrVals || [{ attrVal: dataDiskTypeAttr.attrVal || "SAS", attrName: dataDiskTypeAttr.attrVal || "高IO" }];
                   for (const ddType of dataDiskTypes) {
-                    const skuWithDataDisk = {
-                      ...skuConfig,
-                      resItems: [{
-                        ...skuConfig.resItems[0],
-                        resItems: [
-                          ...skuConfig.resItems[0].resItems,
-                          {
-                            resType: "ebs",
-                            tag: "dataDisk",
-                            itemDefName: ddType.attrVal,
-                            size: parseInt(dataDiskSize),
-                          },
-                        ],
-                      }],
-                    };
-
-                    const prices = await this.queryDesktopPrice(targetRegion.id, skuWithDataDisk);
-                    for (const p of prices) {
-                      result.prices.push({
-                        productName: `${series.prodName} ${tpl.attrName}`,
-                        specification: `${series.prodName} ${tpl.attrName} / 系统盘 ${sysDiskSize}GB ${sysDiskType} / 数据盘 ${dataDiskSize}GB ${ddType.attrName}`,
-                        billingMode: cycleLabels[cycleType],
-                        price: p.finalPrice,
-                        unit: cycleUnits[cycleType],
-                        currency: "CNY",
-                        region: targetRegion.name,
-                        source: "https://desk.ctyun.cn:8816/api/selforder/paas/queryPrice",
-                      });
-                    }
-                  }
-                } else {
-                  // 无数据盘
-                  const prices = await this.queryDesktopPrice(targetRegion.id, skuConfig);
-                  for (const p of prices) {
-                    result.prices.push({
-                      productName: `${series.prodName} ${tpl.attrName}`,
-                      specification: `${series.prodName} ${tpl.attrName} / 系统盘 ${sysDiskSize}GB ${sysDiskType}`,
-                      billingMode: cycleLabels[cycleType],
-                      price: p.finalPrice,
-                      unit: cycleUnits[cycleType],
-                      currency: "CNY",
-                      region: targetRegion.name,
-                      source: "https://desk.ctyun.cn:8816/api/selforder/paas/queryPrice",
+                    tasks.push({
+                      skuConfig: {
+                        ...baseConfig,
+                        resItems: [{
+                          ...baseConfig.resItems[0],
+                          resItems: [
+                            ...baseConfig.resItems[0].resItems,
+                            { resType: "ebs", tag: "dataDisk", itemDefName: ddType.attrVal, size: parseInt(dataDiskSize) },
+                          ],
+                        }],
+                      },
+                      seriesName: series.prodName,
+                      tplName: tpl.attrName,
+                      cycleType,
+                      diskType: ddType.attrName || ddType.attrVal,
                     });
                   }
+                } else {
+                  tasks.push({
+                    skuConfig: baseConfig,
+                    seriesName: series.prodName,
+                    tplName: tpl.attrName,
+                    cycleType,
+                  });
                 }
               }
+            }
+          }
+        }
+      }
+
+      // 4. 分批并发执行，每批最多 10 个请求
+      const BATCH_SIZE = 10;
+      // 去重 key：云电脑按 seriesName + tplName + cycleType 去重，磁盘按 cycleType 去重
+      const priceSeen = new Set<string>();
+
+      for (let i = 0; i < tasks.length; i += BATCH_SIZE) {
+        const batch = tasks.slice(i, i + BATCH_SIZE);
+        const batchResults = await Promise.all(
+          batch.map((task) =>
+            this.queryDesktopPrice(targetRegion.id, task.skuConfig).then((prices) => ({
+              task,
+              prices,
+            }))
+          )
+        );
+
+        for (const { task, prices } of batchResults) {
+          for (const sub of prices) {
+            for (const item of sub.items) {
+              const isDisk = item.resourceType === "BUSINESS_CPC_EBS";
+              const isVm = item.resourceType === "BUSINESS_CPC_VM";
+
+              // 去重
+              const dedupKey = isDisk
+                ? `disk_${task.cycleType}_${task.diskType || ""}`
+                : `vm_${task.seriesName}_${task.tplName}_${task.cycleType}`;
+              if (priceSeen.has(dedupKey)) {
+                continue;
+              }
+              priceSeen.add(dedupKey);
+
+              // 根据 resourceType 映射组件类型
+              const componentTypeMap: Record<string, string> = {
+                "BUSINESS_CPC_VM": "云电脑",
+                "BUSINESS_CPC_EBS": "磁盘",
+              };
+              const componentType = componentTypeMap[item.resourceType] || item.resourceType || "未知";
+
+              // 云电脑显示规格，磁盘显示统一名称（含磁盘类型）
+              const productName = isDisk
+                ? `磁盘（系统盘+数据盘${task.diskType ? " " + task.diskType : ""}）`
+                : `${task.seriesName} ${task.tplName}`;
+
+              result.prices.push({
+                productName,
+                billingMode: cycleLabels[task.cycleType],
+                price: item.finalPrice,
+                unit: cycleUnits[task.cycleType],
+                region: targetRegion.name,
+                componentType,
+              });
             }
           }
         }
@@ -733,7 +787,6 @@ export class CtyunAdapter extends CloudDocAdapter {
       result.message = `天翼云电脑（政企版）价格查询完成，共 ${result.prices.length} 条价格记录（地域：${targetRegion.name}）`;
     } catch (error) {
       result.dataStatus = "no_data";
-      result.note = `云电脑价格查询失败：${error instanceof Error ? error.message : String(error)}`;
     }
 
     return result;
@@ -748,7 +801,7 @@ export class CtyunAdapter extends CloudDocAdapter {
    * 产品名称  包月标准价格（元/G/月）   按需标准价格（元/G/小时）
    * 内存     17                       0.035
    */
-  private parseUnitPrices(markdown: string, source: string): PriceItem[] {
+  private parseUnitPrices(markdown: string): PriceItem[] {
     const prices: PriceItem[] = [];
     // 分段处理，每个 ## 标题为一个规格族
     const sections = markdown.split(/(?=^## )/m);
@@ -766,46 +819,30 @@ export class CtyunAdapter extends CloudDocAdapter {
       if (cpuMatch) {
         prices.push({
           productName: `${familyName} CPU`,
-          specification: `${familyName} CPU`,
           billingMode: "包年包月",
           price: parseFloat(cpuMatch[1]),
           unit: "元/核/月",
-          currency: "CNY",
-          source,
-          note: `${familyName} vCPU 包月单价`,
         });
         prices.push({
           productName: `${familyName} CPU`,
-          specification: `${familyName} CPU`,
           billingMode: "按量计费",
           price: parseFloat(cpuMatch[2]),
           unit: "元/核/小时",
-          currency: "CNY",
-          source,
-          note: `${familyName} vCPU 按需单价`,
         });
       }
 
       if (memMatch) {
         prices.push({
           productName: `${familyName} 内存`,
-          specification: `${familyName} 内存`,
           billingMode: "包年包月",
           price: parseFloat(memMatch[1]),
           unit: "元/GB/月",
-          currency: "CNY",
-          source,
-          note: `${familyName} 内存包月单价`,
         });
         prices.push({
           productName: `${familyName} 内存`,
-          specification: `${familyName} 内存`,
           billingMode: "按量计费",
           price: parseFloat(memMatch[2]),
           unit: "元/GB/小时",
-          currency: "CNY",
-          source,
-          note: `${familyName} 内存按需单价`,
         });
       }
     }
@@ -819,7 +856,7 @@ export class CtyunAdapter extends CloudDocAdapter {
    * 天翼云文档通常以组件单价形式展示（CPU 单价、内存单价），
    * 此方法自动计算常见规格（2C4G、4C8G、8C16G 等）的总价。
    */
-  private calculateCommonSpecs(prices: PriceItem[], source: string): PriceItem[] {
+  private calculateCommonSpecs(prices: PriceItem[]): PriceItem[] {
     const calculatedPrices: PriceItem[] = [];
 
     // 查找 CPU 单价和内存单价
@@ -830,7 +867,7 @@ export class CtyunAdapter extends CloudDocAdapter {
     let billingMode = "包年包月";
 
     for (const p of prices) {
-      const spec = (p.specification || "").toLowerCase();
+      const spec = (p.productName || "").toLowerCase();
       const unit = p.unit || "";
 
       // 匹配 CPU 单价（包含 "cpu" 或 "核"）
@@ -888,13 +925,9 @@ export class CtyunAdapter extends CloudDocAdapter {
         const totalPrice = cpuMonthlyPrice * spec.cpu + memMonthlyPrice * spec.mem;
         calculatedPrices.push({
           productName: `云主机 ${spec.name}`,
-          specification: spec.name,
           billingMode,
           price: Math.round(totalPrice * 100) / 100,
           unit: "元/月",
-          currency: "CNY",
-          source,
-          note: `由组件单价计算得出（CPU ${cpuPrice}${cpuUnit} × ${spec.cpu}核 + 内存 ${memPrice}${memUnit} × ${spec.mem}GB）`,
         });
       }
     }

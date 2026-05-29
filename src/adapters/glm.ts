@@ -189,7 +189,6 @@ export class GlmAdapter extends CloudDocAdapter {
     return {
       pageId,
       title: title || cleanPath,
-      note: description,
       contentPath: cleanPath,
     };
   }
@@ -246,12 +245,9 @@ export class GlmAdapter extends CloudDocAdapter {
           if (!isNaN(price)) {
             prices.push({
               productName,
-              specification: spec,
               billingMode: "按量",
               price,
               unit: "元/百万Token",
-              currency: "CNY",
-              source: "文档定价页面",
             });
           }
         }
@@ -291,7 +287,7 @@ export class GlmAdapter extends CloudDocAdapter {
       if (pricingContent.length > 50) {
         const prices = this.parsePriceTable(pricingContent);
         if (prices.length > 0) {
-          return this.makePriceResult(prices, "https://open.bigmodel.cn/pricing");
+          return this.makePriceResult(prices);
         }
       }
     } catch {
@@ -299,9 +295,8 @@ export class GlmAdapter extends CloudDocAdapter {
     }
 
     // 回退：返回提示信息
-    return this.makePriceResult([], "https://open.bigmodel.cn/pricing", {
+    return this.makePriceResult([], {
       message: "智谱 GLM 定价页面（open.bigmodel.cn/pricing）为 JS 动态渲染的 SPA，无法通过普通 HTTP 请求抓取。建议直接访问 https://open.bigmodel.cn/pricing 查看最新价格。如需程序化获取，可尝试通过 get_page_content 获取定价相关文档页面。",
-      note: "定价页面为 SPA，需浏览器渲染，无法直接抓取",
     });
   }
 }

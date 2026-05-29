@@ -64,34 +64,6 @@ export class GlmAdapter extends CloudDocAdapter {
         return content;
     }
     /**
-     * 按关键词过滤项目（AND 逻辑）
-     */
-    filterByKeywords(items, keyword) {
-        if (!keyword)
-            return items;
-        const keywords = keyword.trim().split(/\s+/).filter(Boolean);
-        if (keywords.length === 0)
-            return items;
-        return items.filter(item => {
-            const text = (item.name || item.title || "").toLowerCase();
-            return keywords.every(kw => text.includes(kw.toLowerCase()));
-        });
-    }
-    /**
-     * 分页处理
-     */
-    paginate(items, page = 1, pageSize = 100) {
-        const start = (page - 1) * pageSize;
-        const paged = items.slice(start, start + pageSize);
-        return {
-            items: paged,
-            total: items.length,
-            page,
-            pageSize,
-            hasMore: start + pageSize < items.length,
-        };
-    }
-    /**
      * 从 llms-full.txt 中提取指定页面的内容
      *
      * llms-full.txt 格式：
@@ -118,15 +90,12 @@ export class GlmAdapter extends CloudDocAdapter {
         return null;
     }
     async listProducts(options) {
-        const allProducts = [
+        return this.paginateProducts([
             {
                 productId: "bigmodel",
                 name: "智谱 GLM API 文档",
-                description: "智谱开放平台 API 文档",
             },
-        ];
-        const filtered = this.filterByKeywords(allProducts, options?.keyword);
-        return this.paginate(filtered, options?.page ?? 1, options?.pageSize ?? 100);
+        ], options);
     }
     async getDocumentToc(productId, options) {
         const entries = await this.parseLlmsTxt();
@@ -179,7 +148,6 @@ export class GlmAdapter extends CloudDocAdapter {
         return {
             pageId,
             title: title || cleanPath,
-            note: description,
             contentPath: cleanPath,
         };
     }
@@ -225,12 +193,9 @@ export class GlmAdapter extends CloudDocAdapter {
                     if (!isNaN(price)) {
                         prices.push({
                             productName,
-                            specification: spec,
                             billingMode: "按量",
                             price,
                             unit: "元/百万Token",
-                            currency: "CNY",
-                            source: "文档定价页面",
                         });
                     }
                 }
@@ -265,12 +230,7 @@ export class GlmAdapter extends CloudDocAdapter {
             if (pricingContent.length > 50) {
                 const prices = this.parsePriceTable(pricingContent);
                 if (prices.length > 0) {
-                    return {
-                        provider: this.provider,
-                        name: this.name,
-                        prices,
-                        source: "https://open.bigmodel.cn/pricing",
-                    };
+                    return this.makePriceResult(prices);
                 }
             }
         }
@@ -278,13 +238,8 @@ export class GlmAdapter extends CloudDocAdapter {
             // 继续尝试其他方式
         }
         // 回退：返回提示信息
-        return {
-            provider: this.provider,
-            name: this.name,
-            prices: [],
-            source: "https://open.bigmodel.cn/pricing",
+        return this.makePriceResult([], {
             message: "智谱 GLM 定价页面（open.bigmodel.cn/pricing）为 JS 动态渲染的 SPA，无法通过普通 HTTP 请求抓取。建议直接访问 https://open.bigmodel.cn/pricing 查看最新价格。如需程序化获取，可尝试通过 get_page_content 获取定价相关文档页面。",
-            note: "定价页面为 SPA，需浏览器渲染，无法直接抓取",
-        };
+        });
     }
 }

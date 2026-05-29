@@ -33,14 +33,12 @@ export interface PageMetadata {
 /** 价格条目 */
 export interface PriceItem {
   productName: string;
-  specification: string;
   region?: string;
   billingMode: string;
   price: number;
   unit: string;
-  currency: string;
-  source: string;
-  note?: string;
+  /** 组件类型（可选）：如云电脑=vm, 系统盘=sysDisk, 数据盘=dataDisk */
+  componentType?: string;
 }
 
 /** 价格查询结果 */
@@ -48,10 +46,8 @@ export interface PriceResult {
   provider: string;
   name: string;
   prices: PriceItem[];
-  source: string;
   updateDate?: string;
   message?: string;
-  note?: string;
   total?: number;
   page?: number;
   pageSize?: number;
@@ -234,12 +230,11 @@ export abstract class CloudDocAdapter {
   /**
    * 构造 PriceResult 的快捷方法
    */
-  protected makePriceResult(prices: PriceItem[], source: string, extra?: Partial<PriceResult>): PriceResult {
+  protected makePriceResult(prices: PriceItem[], extra?: Partial<PriceResult>): PriceResult {
     return {
       provider: this.provider,
       name: this.name,
       prices,
-      source,
       dataStatus: this.determineDataStatus(prices),
       ...extra,
     };

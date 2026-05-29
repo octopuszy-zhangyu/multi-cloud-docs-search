@@ -91,7 +91,6 @@ export class BaiduAdapter extends CloudDocAdapter {
         return {
             pageId,
             title,
-            note: description,
             contentPath: url,
         };
     }
@@ -127,12 +126,9 @@ export class BaiduAdapter extends CloudDocAdapter {
                     if (!isNaN(price)) {
                         prices.push({
                             productName,
-                            specification: spec,
                             billingMode: "按量",
                             price,
                             unit: "元/月",
-                            currency: "CNY",
-                            source: "文档定价页面",
                         });
                     }
                 }
@@ -143,28 +139,6 @@ export class BaiduAdapter extends CloudDocAdapter {
             }
         }
         return prices;
-    }
-    filterByKeywords(items, keyword) {
-        if (!keyword)
-            return items;
-        const keywords = keyword.trim().split(/\s+/).filter(Boolean);
-        if (keywords.length === 0)
-            return items;
-        return items.filter(item => {
-            const text = (item.name || item.title || "").toLowerCase();
-            return keywords.every(kw => text.includes(kw.toLowerCase()));
-        });
-    }
-    paginate(items, page = 1, pageSize = 100) {
-        const start = (page - 1) * pageSize;
-        const paged = items.slice(start, start + pageSize);
-        return {
-            items: paged,
-            total: items.length,
-            page,
-            pageSize,
-            hasMore: start + pageSize < items.length,
-        };
     }
     async getProductPrice(productId, _options) {
         const prices = [];
@@ -225,17 +199,24 @@ export class BaiduAdapter extends CloudDocAdapter {
                 provider: this.provider,
                 name: this.name,
                 prices: [],
-                source: `${BASE_URL}/publicity/bccplus.html`,
                 updateDate: undefined,
-                note: "百度云 BCC 文档中无具体实例价格。预付费定价和后付费定价页面均指向外部「BCC价格详情」页面（cloud.baidu.com/publicity/bccplus.html），该页面包含完整的实例规格定价（含裸实例价格）。请访问该外部页面获取具体价格，或使用 get_product_price_quick({ provider: \"baidu\", productId: \"BCC\" }) 获取定价页面 URL。",
+                dataStatus: "no_price",
             };
+        }
+        // 标记数据状态
+        let dataStatus = "no_data";
+        if (prices.length > 0 && prices[0].price > 0) {
+            dataStatus = "complete";
+        }
+        else if (prices.length > 0 && prices[0].price === 0) {
+            dataStatus = "no_price";
         }
         return {
             provider: this.provider,
             name: this.name,
             prices,
-            source: productId ? `${BASE_URL}/doc/${productId}/pricing` : `${BASE_URL}/doc/index.html`,
             updateDate: undefined,
+            dataStatus,
         };
     }
 }

@@ -12,7 +12,6 @@ export class VolcengineAdapter extends CloudDocAdapter {
             products.push({
                 productId: String(lib.LibraryID),
                 name: lib.Name,
-                description: lib.EnName,
             });
         }
         const filtered = this.filterByKeywords(products, options?.keyword);
@@ -65,28 +64,6 @@ export class VolcengineAdapter extends CloudDocAdapter {
         }
         return children;
     }
-    filterByKeywords(items, keyword) {
-        if (!keyword)
-            return items;
-        const keywords = keyword.trim().split(/\s+/).filter(Boolean);
-        if (keywords.length === 0)
-            return items;
-        return items.filter(item => {
-            const text = (item.name || item.title || "").toLowerCase();
-            return keywords.every(kw => text.includes(kw.toLowerCase()));
-        });
-    }
-    paginate(items, page = 1, pageSize = 100) {
-        const start = (page - 1) * pageSize;
-        const paged = items.slice(start, start + pageSize);
-        return {
-            items: paged,
-            total: items.length,
-            page,
-            pageSize,
-            hasMore: start + pageSize < items.length,
-        };
-    }
     async searchDocuments(productId, keyword) {
         const tocResult = await this.getDocumentToc(productId);
         const toc = tocResult.items;
@@ -117,7 +94,6 @@ export class VolcengineAdapter extends CloudDocAdapter {
         return {
             pageId,
             title: doc.Title,
-            note: "",
             contentPath: pageId,
             bookId: productId,
             updateDate: doc.UpdatedTime,
@@ -146,7 +122,6 @@ export class VolcengineAdapter extends CloudDocAdapter {
      */
     async getProductPrice(productId, _options) {
         let prices = [];
-        let source = `${BASE_URL}/pricing`;
         try {
             // 1. 确定要查询的产品代码列表
             const productCodes = this.resolveProductCodes(productId);
@@ -196,31 +171,33 @@ export class VolcengineAdapter extends CloudDocAdapter {
                             const { unit, billingMode } = this.parsePeriod(period, times);
                             prices.push({
                                 productName,
-                                specification: spec || chargeItemCode,
                                 region,
                                 billingMode,
                                 price,
                                 unit,
-                                currency: "CNY",
-                                source: `${BASE_URL}/pricing?product=${encodeURIComponent(productName)}`,
                             });
                         }
                     }
                 }
             }
-            if (prices.length > 0) {
-                source = `${BASE_URL}/pricing`;
-            }
         }
         catch (error) {
             console.error("获取火山引擎价格信息失败:", error);
+        }
+        // 标记数据状态
+        let dataStatus = "no_data";
+        if (prices.length > 0 && prices[0].price > 0) {
+            dataStatus = "complete";
+        }
+        else if (prices.length > 0 && prices[0].price === 0) {
+            dataStatus = "no_price";
         }
         return {
             provider: this.provider,
             name: this.name,
             prices,
-            source,
             updateDate: undefined,
+            dataStatus,
         };
     }
     /**

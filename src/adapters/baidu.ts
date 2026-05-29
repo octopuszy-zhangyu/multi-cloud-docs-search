@@ -112,7 +112,6 @@ export class BaiduAdapter extends CloudDocAdapter {
     return {
       pageId,
       title,
-      note: description,
       contentPath: url,
     };
   }
@@ -155,12 +154,9 @@ export class BaiduAdapter extends CloudDocAdapter {
           if (!isNaN(price)) {
             prices.push({
               productName,
-              specification: spec,
               billingMode: "按量",
               price,
               unit: "元/月",
-              currency: "CNY",
-              source: "文档定价页面",
             });
           }
         }
@@ -235,9 +231,7 @@ export class BaiduAdapter extends CloudDocAdapter {
         provider: this.provider,
         name: this.name,
         prices: [],
-        source: `${BASE_URL}/publicity/bccplus.html`,
         updateDate: undefined,
-        note: "百度云 BCC 文档中无具体实例价格，定价页面在外部（cloud.baidu.com/publicity/bccplus.html）。请访问该页面获取具体价格，或使用 get_product_price_quick 获取定价页面 URL。",
         dataStatus: "no_price",
       };
     }
@@ -254,7 +248,6 @@ export class BaiduAdapter extends CloudDocAdapter {
       provider: this.provider,
       name: this.name,
       prices,
-      source: productId ? `${BASE_URL}/doc/${productId}/pricing` : `${BASE_URL}/doc/index.html`,
       updateDate: undefined,
       dataStatus,
     };

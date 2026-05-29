@@ -146,7 +146,6 @@ export class BailianAdapter extends CloudDocAdapter {
     return {
       pageId,
       title,
-      note: description,
       contentPath: url,
     };
   }
@@ -186,12 +185,9 @@ export class BailianAdapter extends CloudDocAdapter {
           if (!isNaN(price)) {
             prices.push({
               productName,
-              specification: spec,
               billingMode: "按量",
               price,
               unit: "元/百万Token",
-              currency: "CNY",
-              source: "文档定价页面",
             });
           }
         }
@@ -212,7 +208,7 @@ export class BailianAdapter extends CloudDocAdapter {
     const markdown = htmlToMarkdown(html);
     const prices = this.parsePriceTable(markdown);
 
-    return this.makePriceResult(prices, url, { updateDate: undefined });
+    return this.makePriceResult(prices, { updateDate: undefined });
   }
 
 }

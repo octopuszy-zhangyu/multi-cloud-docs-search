@@ -34,15 +34,12 @@ export class DeepseekAdapter extends CloudDocAdapter {
         return urls;
     }
     async listProducts(options) {
-        const allProducts = [
+        return this.paginateProducts([
             {
                 productId: "api-docs",
                 name: "DeepSeek API 文档",
-                description: "DeepSeek API 官方文档",
             },
-        ];
-        const filtered = this.filterByKeywords(allProducts, options?.keyword);
-        return this.paginate(filtered, options?.page, options?.pageSize);
+        ], options);
     }
     async getDocumentToc(productId, options) {
         const urls = await this.fetchSitemapUrls();
@@ -82,28 +79,6 @@ export class DeepseekAdapter extends CloudDocAdapter {
         }
         return this.paginate(filtered, options?.page, options?.pageSize ?? 200);
     }
-    filterByKeywords(items, keyword) {
-        if (!keyword)
-            return items;
-        const keywords = keyword.trim().split(/\s+/).filter(Boolean);
-        if (keywords.length === 0)
-            return items;
-        return items.filter(item => {
-            const text = (item.name || item.title || "").toLowerCase();
-            return keywords.every(kw => text.includes(kw.toLowerCase()));
-        });
-    }
-    paginate(items, page = 1, pageSize = 100) {
-        const start = (page - 1) * pageSize;
-        const paged = items.slice(start, start + pageSize);
-        return {
-            items: paged,
-            total: items.length,
-            page,
-            pageSize,
-            hasMore: start + pageSize < items.length,
-        };
-    }
     async searchDocuments(productId, keyword) {
         const tocResult = await this.getDocumentToc(productId);
         const toc = tocResult.items;
@@ -137,7 +112,6 @@ export class DeepseekAdapter extends CloudDocAdapter {
         return {
             pageId,
             title,
-            note: description,
             contentPath: url,
             updateDate: undefined,
         };
@@ -190,12 +164,9 @@ export class DeepseekAdapter extends CloudDocAdapter {
                     if (!isNaN(price)) {
                         prices.push({
                             productName,
-                            specification: spec,
                             billingMode: "按量",
                             price,
                             unit: priceStr.includes("$") ? "元/百万Token" : "元/百万Token",
-                            currency: priceStr.includes("$") ? "USD" : "CNY",
-                            source: "文档定价页面",
                         });
                     }
                 }
@@ -221,12 +192,6 @@ export class DeepseekAdapter extends CloudDocAdapter {
             "";
         const markdown = htmlToMarkdown(mainContent);
         const prices = this.parsePriceTable(markdown);
-        return {
-            provider: this.provider,
-            name: this.name,
-            prices,
-            source: "https://api-docs.deepseek.com/quick_start/pricing",
-            updateDate: undefined,
-        };
+        return this.makePriceResult(prices, { updateDate: undefined });
     }
 }

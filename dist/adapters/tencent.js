@@ -24,7 +24,6 @@ export class TencentAdapter extends CloudDocAdapter {
                     products.push({
                         productId,
                         name,
-                        description: "",
                     });
                 }
             }
@@ -41,7 +40,6 @@ export class TencentAdapter extends CloudDocAdapter {
                     products.push({
                         productId,
                         name,
-                        description: "",
                     });
                 }
             }
@@ -164,7 +162,6 @@ export class TencentAdapter extends CloudDocAdapter {
                     results.push({
                         pageId: item.pageId,
                         title: item.title,
-                        description: undefined,
                     });
                 }
                 if (item.children) {
@@ -190,7 +187,6 @@ export class TencentAdapter extends CloudDocAdapter {
         return {
             pageId,
             title,
-            note: description || updateDate,
             contentPath: url,
         };
     }
@@ -212,7 +208,6 @@ export class TencentAdapter extends CloudDocAdapter {
      */
     async getProductPrice(productId) {
         const name = this.name;
-        let sourceUrl = "https://buy.cloud.tencent.com/price";
         let prices = [];
         try {
             // 判断是否为 CVM 产品
@@ -224,9 +219,6 @@ export class TencentAdapter extends CloudDocAdapter {
                 productId.toLowerCase().includes("ecs");
             if (isCvm) {
                 prices = await this.fetchCvmPrices();
-                if (prices.length > 0) {
-                    sourceUrl = "https://buy.cloud.tencent.com/price/cvm/overview";
-                }
             }
             else {
                 // 非 CVM 产品，使用计算器 API 或回退文档解析
@@ -240,11 +232,19 @@ export class TencentAdapter extends CloudDocAdapter {
         if (prices.length === 0) {
             prices = await this.fallbackParsePrice(productId);
         }
+        // 标记数据状态
+        let dataStatus = "no_data";
+        if (prices.length > 0 && prices[0].price > 0) {
+            dataStatus = "complete";
+        }
+        else if (prices.length > 0 && prices[0].price === 0) {
+            dataStatus = "no_price";
+        }
         return {
             provider: this.provider,
             name,
             prices,
-            source: sourceUrl,
+            dataStatus,
         };
     }
     /**
@@ -313,26 +313,19 @@ export class TencentAdapter extends CloudDocAdapter {
                         if (price.OriginalPrice > 0) {
                             allPrices.set(key + "_1m", {
                                 productName: "云服务器 CVM",
-                                specification: `${config.TypeName} ${config.InstanceType} (${config.Cpu}核 ${config.Memory}GB)`,
                                 region: config.Zone,
                                 billingMode: "包年包月",
                                 price: price.OriginalPrice,
                                 unit: "元/月",
-                                currency: "CNY",
-                                source: "https://buy.cloud.tencent.com/price/cvm/overview",
                             });
                         }
                         if (price.OriginalPriceOneYear > 0) {
                             allPrices.set(key + "_1y", {
                                 productName: "云服务器 CVM",
-                                specification: `${config.TypeName} ${config.InstanceType} (${config.Cpu}核 ${config.Memory}GB)`,
                                 region: config.Zone,
                                 billingMode: "包年包月",
                                 price: price.DiscountPriceOneYear || price.OriginalPriceOneYear,
                                 unit: "元/年",
-                                currency: "CNY",
-                                note: price.DiscountOneYear < 100 ? `${price.DiscountOneYear}折` : undefined,
-                                source: "https://buy.cloud.tencent.com/price/cvm/overview",
                             });
                         }
                     }
@@ -341,13 +334,10 @@ export class TencentAdapter extends CloudDocAdapter {
                         if (price.UnitPrice > 0) {
                             allPrices.set(key + "_hourly", {
                                 productName: "云服务器 CVM",
-                                specification: `${config.TypeName} ${config.InstanceType} (${config.Cpu}核 ${config.Memory}GB)`,
                                 region: config.Zone,
                                 billingMode: "按量",
                                 price: price.UnitPrice,
                                 unit: "元/小时",
-                                currency: "CNY",
-                                source: "https://buy.cloud.tencent.com/price/cvm/overview",
                             });
                         }
                     }
@@ -385,26 +375,20 @@ export class TencentAdapter extends CloudDocAdapter {
                 if (priceType === "linear" && bw.UnitPrice > 0) {
                     prices.push({
                         productName: "公网带宽",
-                        specification: chargeType,
                         region: "ap-guangzhou",
                         billingMode: chargeType.includes("PREPAID") ? "包年包月" : "按量",
                         price: bw.UnitPrice,
                         unit: chargeType.includes("HOUR") ? "元/小时" : "元/月",
-                        currency: "CNY",
-                        source: "https://buy.cloud.tencent.com/price/cvm/overview",
                     });
                 }
                 else if (priceType === "ladder" && bw.LadderPriceSet) {
                     for (const ladder of bw.LadderPriceSet) {
                         prices.push({
                             productName: "公网带宽",
-                            specification: `${chargeType} (${ladder.Start}-${ladder.End === -1 ? "∞" : ladder.End}Mbps)`,
                             region: "ap-guangzhou",
                             billingMode: chargeType.includes("PREPAID") ? "包年包月" : "按量",
                             price: ladder.UnitPrice,
                             unit: ladder.ChargeUnit === "HOUR" ? "元/小时" : "元/月",
-                            currency: "CNY",
-                            source: "https://buy.cloud.tencent.com/price/cvm/overview",
                         });
                     }
                 }
@@ -426,13 +410,12 @@ export class TencentAdapter extends CloudDocAdapter {
      * 回退方案：从文档页面解析价格
      */
     async fallbackParsePrice(productId) {
-        const sourceUrl = "https://buy.cloud.tencent.com/price";
         const prices = [];
         if (!productId) {
             try {
-                const html = await this.fetchHtml(sourceUrl);
+                const html = await this.fetchHtml("https://buy.cloud.tencent.com/price");
                 const md = htmlToMarkdown(html);
-                return this.parsePriceTableFromMd(md, sourceUrl);
+                return this.parsePriceTableFromMd(md);
             }
             catch {
                 return prices;
@@ -447,7 +430,7 @@ export class TencentAdapter extends CloudDocAdapter {
             try {
                 const html = await this.fetchHtml(url);
                 const md = htmlToMarkdown(html);
-                const result = this.parsePriceTableFromMd(md, url);
+                const result = this.parsePriceTableFromMd(md);
                 if (result.length > 0)
                     return result;
             }
@@ -460,7 +443,7 @@ export class TencentAdapter extends CloudDocAdapter {
     /**
      * 从 Markdown 文本中解析价格表格
      */
-    parsePriceTableFromMd(markdown, sourceUrl) {
+    parsePriceTableFromMd(markdown) {
         const lines = markdown.split("\n");
         const prices = [];
         let inTable = false;
@@ -484,12 +467,9 @@ export class TencentAdapter extends CloudDocAdapter {
                     if (priceMatch) {
                         prices.push({
                             productName,
-                            specification: cells.length > 2 ? cells.slice(1, -1).join(" / ") : "",
                             billingMode: headers.includes("计费模式") || headers.includes("付费模式") ? cells[headers.indexOf("计费模式")] || cells[headers.indexOf("付费模式")] || "" : "",
                             price: parseFloat(priceMatch[0].replace(/,/g, "")),
                             unit: "",
-                            currency: "CNY",
-                            source: sourceUrl,
                         });
                     }
                 }
@@ -500,33 +480,5 @@ export class TencentAdapter extends CloudDocAdapter {
             }
         }
         return prices;
-    }
-    /**
-     * 按关键词过滤列表（AND 逻辑，关键词以空格分隔）
-     */
-    filterByKeywords(items, keyword) {
-        if (!keyword)
-            return items;
-        const keywords = keyword.trim().split(/\s+/).filter(Boolean);
-        if (keywords.length === 0)
-            return items;
-        return items.filter(item => {
-            const text = (item.name || item.title || "").toLowerCase();
-            return keywords.every(kw => text.includes(kw.toLowerCase()));
-        });
-    }
-    /**
-     * 分页包装
-     */
-    paginate(items, page = 1, pageSize = 100) {
-        const start = (page - 1) * pageSize;
-        const paged = items.slice(start, start + pageSize);
-        return {
-            items: paged,
-            total: items.length,
-            page,
-            pageSize,
-            hasMore: start + pageSize < items.length,
-        };
     }
 }

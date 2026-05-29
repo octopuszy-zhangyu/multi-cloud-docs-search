@@ -240,7 +240,6 @@ export class EcloudAdapter extends CloudDocAdapter {
       return {
         pageId,
         title: article.title,
-        note: `更新时间：${updateDate}`,
         contentPath: article.content,
       };
     }
@@ -255,7 +254,6 @@ export class EcloudAdapter extends CloudDocAdapter {
     return {
       pageId,
       title,
-      note: "",
       contentPath: htmlUrl,
     };
   }
@@ -295,7 +293,7 @@ export class EcloudAdapter extends CloudDocAdapter {
    * 移动云价格表格格式：
    * | 主机类型 | 规格名称 | vCPU | 内存 | ... | 按量（元/小时） | 包月（元/月） | 包年（元/年） |
    */
-  private parsePriceTable(markdown: string, source: string): PriceItem[] {
+  private parsePriceTable(markdown: string): PriceItem[] {
     const lines = markdown.split("\n");
     const prices: PriceItem[] = [];
     let inTable = false;
@@ -353,32 +351,23 @@ export class EcloudAdapter extends CloudDocAdapter {
           if (h.includes("按量")) {
             prices.push({
               productName: specName,
-              specification: specName,
               billingMode: "按量",
               price,
               unit: "元/小时",
-              currency: "CNY",
-              source,
             });
           } else if (h.includes("包月")) {
             prices.push({
               productName: specName,
-              specification: specName,
               billingMode: "包年包月",
               price,
               unit: "元/月",
-              currency: "CNY",
-              source,
             });
           } else if (h.includes("包年")) {
             prices.push({
               productName: specName,
-              specification: specName,
               billingMode: "包年包月",
               price,
               unit: "元/年",
-              currency: "CNY",
-              source,
             });
           }
         }
@@ -396,7 +385,6 @@ export class EcloudAdapter extends CloudDocAdapter {
       provider: this.provider,
       name: this.name,
       prices: [],
-      source: `${HELP_CENTER_URL}/doc/category/${productId || ""}`,
     };
 
     if (!productId) {
@@ -428,7 +416,7 @@ export class EcloudAdapter extends CloudDocAdapter {
         try {
           const meta = await this.getPageMetadata(page.pageId);
           const content = await this.getPageContent(meta.contentPath);
-          const prices = this.parsePriceTable(content, meta.contentPath);
+          const prices = this.parsePriceTable(content);
           if (prices.length > 0) {
             result.prices.push(...prices);
           }
@@ -437,17 +425,13 @@ export class EcloudAdapter extends CloudDocAdapter {
         }
       }
 
-      if (result.prices.length > 0) {
-        result.source = `${HELP_CENTER_URL}/doc/category/${productId}`;
-      }
-
       // 关键词过滤
       let filteredPrices = result.prices;
       if (options?.keyword) {
         const keywords = options.keyword.trim().split(/\s+/).filter(Boolean);
         if (keywords.length > 0) {
           filteredPrices = result.prices.filter(item => {
-            const text = (item.productName + " " + item.specification + " " + item.billingMode).toLowerCase();
+            const text = (item.productName + " " + item.billingMode).toLowerCase();
             return keywords.every(kw => text.includes(kw.toLowerCase()));
           });
         }

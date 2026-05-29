@@ -198,7 +198,6 @@ export class CucloudAdapter extends CloudDocAdapter {
       return {
         pageId,
         title: doc.title.replace(/<[^>]+>/g, ""),
-        note: doc.update_date || "",
         contentPath: `${SUPPORT_URL}/document/${pageId}.html`,
       };
     }
@@ -206,7 +205,6 @@ export class CucloudAdapter extends CloudDocAdapter {
     return {
       pageId,
       title: "",
-      note: "",
       contentPath: `${SUPPORT_URL}/document/${pageId}.html`,
     };
   }
@@ -250,7 +248,7 @@ export class CucloudAdapter extends CloudDocAdapter {
     }
   }
 
-  private parsePriceTable(markdown: string, source: string): PriceItem[] {
+  private parsePriceTable(markdown: string): PriceItem[] {
     const lines = markdown.split("\n");
     const prices: PriceItem[] = [];
     let inTable = false;
@@ -304,12 +302,9 @@ export class CucloudAdapter extends CloudDocAdapter {
 
           prices.push({
             productName,
-            specification,
             billingMode,
             price,
             unit,
-            currency: "CNY",
-            source,
           });
         }
       } else {
@@ -326,7 +321,6 @@ export class CucloudAdapter extends CloudDocAdapter {
       provider: this.provider,
       name: this.name,
       prices: [],
-      source: `${SUPPORT_URL}/document/${productId || ""}.html`,
     };
 
     if (!productId) {
@@ -343,10 +337,9 @@ export class CucloudAdapter extends CloudDocAdapter {
           if (data.data?.docList && data.data.docList.length > 0) {
             const doc = data.data.docList[0];
             const content = doc.content.replace(/<[^>]+>/g, "");
-            const prices = this.parsePriceTable(content, `${SUPPORT_URL}/document/${doc.document_id}.html`);
+            const prices = this.parsePriceTable(content);
             if (prices.length > 0) {
               result.prices = prices;
-              result.source = `${SUPPORT_URL}/document/${doc.document_id}.html`;
               break;
             }
           }
@@ -360,7 +353,6 @@ export class CucloudAdapter extends CloudDocAdapter {
         const dailyPrices = await this.extractDailyUnitPrices(productId);
         if (dailyPrices.length > 0) {
           result.prices = dailyPrices;
-          result.source = "从搜索结果摘要中提取的按日单价";
         }
       }
     } catch {
@@ -401,24 +393,18 @@ export class CucloudAdapter extends CloudDocAdapter {
               if (vcpuPrice > 0) {
                 prices.push({
                   productName: "云服务器 ECS",
-                  specification: "vCPU",
                   billingMode: "按量计费（日单价）",
                   price: vcpuPrice,
                   unit: "核/日",
-                  currency: "CNY",
-                  source: `${SUPPORT_URL}/document/${doc.document_id}.html`,
                 });
               }
 
               if (memPrice > 0) {
                 prices.push({
                   productName: "云服务器 ECS",
-                  specification: "内存",
                   billingMode: "按量计费（日单价）",
                   price: memPrice,
                   unit: "GB/日",
-                  currency: "CNY",
-                  source: `${SUPPORT_URL}/document/${doc.document_id}.html`,
                 });
               }
 

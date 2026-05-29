@@ -42,7 +42,7 @@ export class AliyunAdapter extends CloudDocAdapter {
      *
      * 根 llms.txt 中产品级条目指向 /zh/{productId}/llms.txt
      */
-    async listProducts() {
+    async listProducts(options) {
         const text = await this.fetchText(`${BASE_URL}/llms.txt`);
         const entries = this.parseLlmsTxt(text);
         const products = [];
@@ -56,12 +56,14 @@ export class AliyunAdapter extends CloudDocAdapter {
                     products.push({
                         productId,
                         name: entry.title,
-                        description: entry.description,
                     });
                 }
             }
         }
-        return products;
+        const filtered = this.filterByKeywords(products, options?.keyword);
+        const page = options?.page ?? 1;
+        const pageSize = options?.pageSize ?? 100;
+        return this.paginate(filtered, page, pageSize);
     }
     /**
      * 从产品级 llms.txt 获取文档目录
@@ -81,13 +83,15 @@ export class AliyunAdapter extends CloudDocAdapter {
         if (options?.keyword) {
             const keywords = options.keyword.trim().split(/\s+/).filter(Boolean);
             if (keywords.length > 0) {
-                return items.filter(item => {
+                return this.paginate(items.filter(item => {
                     const text = (item.title || "").toLowerCase();
                     return keywords.every(kw => text.includes(kw.toLowerCase()));
-                });
+                }), options?.page, options?.pageSize);
             }
         }
-        return items;
+        const page = options?.page ?? 1;
+        const pageSize = options?.pageSize ?? 200;
+        return this.paginate(items, page, pageSize);
     }
     /**
      * 从产品级 llms.txt 搜索文档（标题+描述匹配）
@@ -147,7 +151,6 @@ export class AliyunAdapter extends CloudDocAdapter {
         return {
             pageId,
             title,
-            note: description,
             contentPath: url,
         };
     }
@@ -185,12 +188,9 @@ export class AliyunAdapter extends CloudDocAdapter {
                     if (!isNaN(price)) {
                         prices.push({
                             productName,
-                            specification: spec,
                             billingMode: "按量",
                             price,
                             unit: "元/月",
-                            currency: "CNY",
-                            source: "文档定价页面",
                         });
                     }
                 }
@@ -204,7 +204,6 @@ export class AliyunAdapter extends CloudDocAdapter {
     }
     async getProductPrice(productId, _options) {
         const prices = [];
-        let source = `${BASE_URL}/price`;
         let updateDate;
         if (productId) {
             // 尝试获取产品定价文档
@@ -220,7 +219,6 @@ export class AliyunAdapter extends CloudDocAdapter {
                     const parsed = this.parsePriceTable(markdown);
                     if (parsed.length > 0) {
                         prices.push(...parsed);
-                        source = url;
                         break;
                     }
                 }
@@ -254,7 +252,6 @@ export class AliyunAdapter extends CloudDocAdapter {
                             const parsed = this.parsePriceTable(tableMd);
                             if (parsed.length > 0) {
                                 prices.push(...parsed);
-                                source = pricePageUrl;
                             }
                         }
                     });
@@ -275,13 +272,9 @@ export class AliyunAdapter extends CloudDocAdapter {
                                 if (!isNaN(price) && price > 0) {
                                     prices.push({
                                         productName: productId,
-                                        specification: spec,
                                         billingMode: unit.includes("小时") || unit.includes("h") ? "按量" : "包年包月",
                                         price,
                                         unit: `元/${unit}`,
-                                        currency: "CNY",
-                                        source: pricePageUrl,
-                                        note: "从文档页面提取的价格，可能为示例价格，实际价格以官网定价页为准",
                                     });
                                 }
                             }
@@ -296,22 +289,12 @@ export class AliyunAdapter extends CloudDocAdapter {
             if (prices.length === 0) {
                 prices.push({
                     productName: productId,
-                    specification: "",
                     billingMode: "",
                     price: 0,
                     unit: "",
-                    currency: "CNY",
-                    source: "https://www.aliyun.com/price/product",
-                    note: "【重要】阿里云 ECS 文档中只有计费模式说明（包年包月、按量付费、预留实例券等），不包含具体实例规格价格。ECS 实例价格位于独立的定价计算器页面，请访问 https://www.aliyun.com/price/product 选择地域和实例规格后查询实时价格。",
                 });
             }
         }
-        return {
-            provider: this.provider,
-            name: this.name,
-            prices,
-            source: productId ? `${BASE_URL}/zh/${productId}/billing` : `${BASE_URL}/price`,
-            updateDate,
-        };
+        return this.makePriceResult(prices, { updateDate });
     }
 }

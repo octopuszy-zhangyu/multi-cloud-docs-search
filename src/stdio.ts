@@ -720,13 +720,44 @@ server.registerTool(
         if (keyword) {
           const lowerKeyword = keyword.toLowerCase().trim();
 
+          // 计费模式近义词映射（覆盖所有云厂商的 billingMode 取值）
+          // 标准值: "按量", "包年包月", "包月", "包年"
+          const billingModeAliases: Record<string, string[]> = {
+            "按量": ["按量", "按需", "按量计费", "按需计费", "后付费", "postpaid", "hourly", "日单价"],
+            "包年包月": ["包年包月", "包月", "包年", "预付费", "prepaid", "monthly", "yearly"],
+            "包月": ["包月", "包年包月", "预付费", "prepaid", "monthly"],
+            "包年": ["包年", "包年包月", "预付费", "prepaid", "yearly"],
+          };
+
+          // 检查 keyword 是否匹配 billingMode（含近义词）
+          const matchBillingMode = (billingMode: string | undefined, kw: string): boolean => {
+            if (!billingMode) return false;
+            const lowerBilling = billingMode.toLowerCase();
+            if (lowerBilling.includes(kw)) return true;
+            for (const [standard, aliases] of Object.entries(billingModeAliases)) {
+              if (aliases.includes(kw) && lowerBilling.includes(standard.toLowerCase())) {
+                return true;
+              }
+            }
+            return false;
+          };
+
+          // 按空格分词，每个词必须 AND 匹配
+          const keywords = lowerKeyword.split(/\s+/).filter(k => k.length > 0);
+
           // 精确匹配过滤
-          let filtered = prices.filter(p =>
-            p.specification?.toLowerCase().includes(lowerKeyword) ||
-            p.productName?.toLowerCase().includes(lowerKeyword) ||
-            p.region?.toLowerCase().includes(lowerKeyword) ||
-            p.billingMode?.toLowerCase().includes(lowerKeyword)
-          );
+          let filtered = prices.filter(p => {
+            // 每个关键词都必须匹配至少一个字段
+            return keywords.every(kw => {
+              // productName 匹配
+              if (p.productName?.toLowerCase().includes(kw)) return true;
+              // region 匹配
+              if (p.region?.toLowerCase().includes(kw)) return true;
+              // billingMode 近义词匹配
+              if (matchBillingMode(p.billingMode, kw)) return true;
+              return false;
+            });
+          });
 
           // 自动扩展：精确匹配为空时，尝试规格变体匹配
           if (filtered.length === 0) {
@@ -746,7 +777,7 @@ server.registerTool(
             if (matchedSpec) {
               const variants = matchedSpec[1];
               filtered = prices.filter(p => {
-                const specText = (p.specification + " " + (p.productName || "")).toLowerCase();
+                const specText = (p.productName + " " + (p.productName || "")).toLowerCase();
                 return variants.some(v => specText.includes(v));
               });
 
@@ -777,7 +808,7 @@ server.registerTool(
               const cores = coreMemMatch[1];
               const mem = coreMemMatch[2];
               filtered = prices.filter(p => {
-                const specText = (p.specification + " " + (p.productName || "")).toLowerCase();
+                const specText = (p.productName + " " + (p.productName || "")).toLowerCase();
                 return specText.includes(`${cores}核`) && specText.includes(`${mem}gb`);
               });
 
@@ -806,7 +837,7 @@ server.registerTool(
             if (coreOnlyMatch) {
               const cores = coreOnlyMatch[1];
               filtered = prices.filter(p => {
-                const specText = (p.specification + " " + (p.productName || "")).toLowerCase();
+                const specText = (p.productName + " " + (p.productName || "")).toLowerCase();
                 return specText.includes(`${cores}核`);
               });
 
@@ -854,7 +885,7 @@ server.registerTool(
       // 构建 message 指引
       let message = "";
       if (result.dataStatus === "no_data" || result.dataStatus === "no_price") {
-        message = `价格数据状态：${result.dataStatus}。${result.note || ""} 建议：传 quick=true 获取定价页面 URL，或访问官网价格计算器`;
+        message = `价格数据状态：${result.dataStatus}。建议：传 quick=true 获取定价页面 URL，或访问官网价格计算器`;
       } else if (prices.length === 0) {
         message = "未找到匹配的价格数据。建议：使用 keyword 参数过滤（如 keyword=\"4C8G\"、\"按量\"、\"包月\"），或传 quick=true 获取定价页面 URL";
       } else if (hasMore) {

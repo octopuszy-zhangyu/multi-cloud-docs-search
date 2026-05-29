@@ -51,7 +51,6 @@ export class EcloudAdapter extends CloudDocAdapter {
                         products.push({
                             productId: String(node.id),
                             name: node.name,
-                            description: parentName,
                         });
                     }
                 }
@@ -74,7 +73,7 @@ export class EcloudAdapter extends CloudDocAdapter {
                 products.push({
                     productId: match[1],
                     name: title,
-                    description: "",
+                    description: undefined,
                 });
             }
         });
@@ -125,14 +124,14 @@ export class EcloudAdapter extends CloudDocAdapter {
             if (options?.topOnly) {
                 filtered = filtered.map(item => ({ pageId: item.pageId, title: item.title }));
             }
-            return this.paginate(filtered, options?.page, options?.pageSize, 200);
+            return this.paginate(filtered, options?.page, options?.pageSize);
         }
         const url = `${OUTLINE_TREE_API}?outlineId=${outlineId}`;
         const data = await this.fetchApi(url);
         const items = [];
         const seen = new Set();
         if (!data?.data?.children)
-            return this.paginate([], options?.page, options?.pageSize, 200);
+            return this.paginate([], options?.page, options?.pageSize);
         const extractArticles = (nodes) => {
             for (const node of nodes) {
                 if (node.articleId && !seen.has(String(node.articleId))) {
@@ -154,30 +153,7 @@ export class EcloudAdapter extends CloudDocAdapter {
         if (options?.topOnly) {
             filtered = filtered.map(item => ({ pageId: item.pageId, title: item.title }));
         }
-        return this.paginate(filtered, options?.page, options?.pageSize, 200);
-    }
-    filterByKeywords(items, keyword) {
-        if (!keyword)
-            return items;
-        const keywords = keyword.trim().split(/\s+/).filter(Boolean);
-        if (keywords.length === 0)
-            return items;
-        return items.filter(item => {
-            const text = (item.name || item.title || "").toLowerCase();
-            return keywords.every(kw => text.includes(kw.toLowerCase()));
-        });
-    }
-    paginate(items, page = 1, pageSize = 100, defaultPageSize) {
-        const effectivePageSize = pageSize || defaultPageSize || 100;
-        const start = (page - 1) * effectivePageSize;
-        const paged = items.slice(start, start + effectivePageSize);
-        return {
-            items: paged,
-            total: items.length,
-            page,
-            pageSize: effectivePageSize,
-            hasMore: start + effectivePageSize < items.length,
-        };
+        return this.paginate(filtered, options?.page, options?.pageSize);
     }
     async searchDocuments(productId, keyword) {
         // 移动云没有公开的搜索API，通过遍历文档目录做本地关键词匹配
@@ -201,7 +177,6 @@ export class EcloudAdapter extends CloudDocAdapter {
             return {
                 pageId,
                 title: article.title,
-                note: `更新时间：${updateDate}`,
                 contentPath: article.content,
             };
         }
@@ -213,7 +188,6 @@ export class EcloudAdapter extends CloudDocAdapter {
         return {
             pageId,
             title,
-            note: "",
             contentPath: htmlUrl,
         };
     }
@@ -247,7 +221,7 @@ export class EcloudAdapter extends CloudDocAdapter {
      * 移动云价格表格格式：
      * | 主机类型 | 规格名称 | vCPU | 内存 | ... | 按量（元/小时） | 包月（元/月） | 包年（元/年） |
      */
-    parsePriceTable(markdown, source) {
+    parsePriceTable(markdown) {
         const lines = markdown.split("\n");
         const prices = [];
         let inTable = false;
@@ -301,34 +275,25 @@ export class EcloudAdapter extends CloudDocAdapter {
                     if (h.includes("按量")) {
                         prices.push({
                             productName: specName,
-                            specification: specName,
                             billingMode: "按量",
                             price,
                             unit: "元/小时",
-                            currency: "CNY",
-                            source,
                         });
                     }
                     else if (h.includes("包月")) {
                         prices.push({
                             productName: specName,
-                            specification: specName,
                             billingMode: "包年包月",
                             price,
                             unit: "元/月",
-                            currency: "CNY",
-                            source,
                         });
                     }
                     else if (h.includes("包年")) {
                         prices.push({
                             productName: specName,
-                            specification: specName,
                             billingMode: "包年包月",
                             price,
                             unit: "元/年",
-                            currency: "CNY",
-                            source,
                         });
                     }
                 }
@@ -345,7 +310,6 @@ export class EcloudAdapter extends CloudDocAdapter {
             provider: this.provider,
             name: this.name,
             prices: [],
-            source: `${HELP_CENTER_URL}/doc/category/${productId || ""}`,
         };
         if (!productId) {
             return result;
@@ -369,7 +333,7 @@ export class EcloudAdapter extends CloudDocAdapter {
                 try {
                     const meta = await this.getPageMetadata(page.pageId);
                     const content = await this.getPageContent(meta.contentPath);
-                    const prices = this.parsePriceTable(content, meta.contentPath);
+                    const prices = this.parsePriceTable(content);
                     if (prices.length > 0) {
                         result.prices.push(...prices);
                     }
@@ -378,16 +342,13 @@ export class EcloudAdapter extends CloudDocAdapter {
                     continue;
                 }
             }
-            if (result.prices.length > 0) {
-                result.source = `${HELP_CENTER_URL}/doc/category/${productId}`;
-            }
             // 关键词过滤
             let filteredPrices = result.prices;
             if (options?.keyword) {
                 const keywords = options.keyword.trim().split(/\s+/).filter(Boolean);
                 if (keywords.length > 0) {
                     filteredPrices = result.prices.filter(item => {
-                        const text = (item.productName + " " + item.specification + " " + item.billingMode).toLowerCase();
+                        const text = (item.productName + " " + item.billingMode).toLowerCase();
                         return keywords.every(kw => text.includes(kw.toLowerCase()));
                     });
                 }
@@ -405,6 +366,16 @@ export class EcloudAdapter extends CloudDocAdapter {
         }
         catch {
             // Return empty prices if unable to fetch
+        }
+        // 标记数据状态
+        if (result.prices.length > 0 && result.prices[0].price > 0) {
+            result.dataStatus = "complete";
+        }
+        else if (result.prices.length > 0 && result.prices[0].price === 0) {
+            result.dataStatus = "no_price";
+        }
+        else {
+            result.dataStatus = "no_data";
         }
         return result;
     }

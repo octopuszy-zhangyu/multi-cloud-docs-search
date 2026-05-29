@@ -5,39 +5,13 @@ const LLMS_URL = `${BASE_URL}/docs/llms.txt`;
 export class MinimaxAdapter extends CloudDocAdapter {
     provider = "minimax";
     name = "MiniMax";
-    filterByKeywords(items, keyword) {
-        if (!keyword)
-            return items;
-        const keywords = keyword.trim().split(/\s+/).filter(Boolean);
-        if (keywords.length === 0)
-            return items;
-        return items.filter((item) => {
-            const text = (item.name || item.title || "").toLowerCase();
-            return keywords.every((kw) => text.includes(kw.toLowerCase()));
-        });
-    }
-    paginate(items, page = 1, pageSize = 100) {
-        const start = (page - 1) * pageSize;
-        const paged = items.slice(start, start + pageSize);
-        return {
-            items: paged,
-            total: items.length,
-            page,
-            pageSize,
-            hasMore: start + pageSize < items.length,
-        };
-    }
     async listProducts(options) {
-        // MiniMax 只有一个产品
-        const allProducts = [
+        return this.paginateProducts([
             {
                 productId: "minimax-api",
                 name: "MiniMax API 文档",
-                description: "MiniMax 开放平台 API 文档",
             },
-        ];
-        const filtered = this.filterByKeywords(allProducts, options?.keyword);
-        return this.paginate(filtered, options?.page, options?.pageSize);
+        ], options);
     }
     async getDocumentToc(productId, options) {
         const text = await this.fetchText(LLMS_URL);
@@ -155,7 +129,6 @@ export class MinimaxAdapter extends CloudDocAdapter {
         return {
             pageId,
             title,
-            note: "",
             contentPath: url,
         };
     }
@@ -191,12 +164,9 @@ export class MinimaxAdapter extends CloudDocAdapter {
                     if (!isNaN(price)) {
                         prices.push({
                             productName,
-                            specification: spec,
                             billingMode: "按量",
                             price,
                             unit: "元/千Token",
-                            currency: "CNY",
-                            source: "文档定价页面",
                         });
                     }
                 }
@@ -212,12 +182,6 @@ export class MinimaxAdapter extends CloudDocAdapter {
         const url = `${BASE_URL}/docs/guides/pricing-paygo.md`;
         const markdown = await this.fetchText(url);
         const prices = this.parsePriceTable(markdown);
-        return {
-            provider: this.provider,
-            name: this.name,
-            prices,
-            source: url,
-            updateDate: undefined,
-        };
+        return this.makePriceResult(prices, { updateDate: undefined });
     }
 }

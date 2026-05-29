@@ -182,7 +182,6 @@ export class VolcengineAdapter extends CloudDocAdapter {
     return {
       pageId,
       title: doc.Title,
-      note: "",
       contentPath: pageId,
       bookId: productId,
       updateDate: doc.UpdatedTime,
@@ -215,7 +214,6 @@ export class VolcengineAdapter extends CloudDocAdapter {
    */
   async getProductPrice(productId?: string, _options?: PriceQueryOptions): Promise<PriceResult> {
     let prices: PriceItem[] = [];
-    let source = `${BASE_URL}/pricing`;
 
     try {
       // 1. 确定要查询的产品代码列表
@@ -278,21 +276,14 @@ export class VolcengineAdapter extends CloudDocAdapter {
 
               prices.push({
                 productName,
-                specification: spec || chargeItemCode,
                 region,
                 billingMode,
                 price,
                 unit,
-                currency: "CNY",
-                source: `${BASE_URL}/pricing?product=${encodeURIComponent(productName)}`,
               });
             }
           }
         }
-      }
-
-      if (prices.length > 0) {
-        source = `${BASE_URL}/pricing`;
       }
     } catch (error) {
       console.error("获取火山引擎价格信息失败:", error);
@@ -310,7 +301,6 @@ export class VolcengineAdapter extends CloudDocAdapter {
       provider: this.provider,
       name: this.name,
       prices,
-      source,
       updateDate: undefined,
       dataStatus,
     };

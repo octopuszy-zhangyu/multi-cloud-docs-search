@@ -150,7 +150,6 @@ export class DeepseekAdapter extends CloudDocAdapter {
     return {
       pageId,
       title,
-      note: description,
       contentPath: url,
       updateDate: undefined,
     };
@@ -214,12 +213,9 @@ export class DeepseekAdapter extends CloudDocAdapter {
           if (!isNaN(price)) {
             prices.push({
               productName,
-              specification: spec,
               billingMode: "按量",
               price,
               unit: priceStr.includes("$") ? "元/百万Token" : "元/百万Token",
-              currency: priceStr.includes("$") ? "USD" : "CNY",
-              source: "文档定价页面",
             });
           }
         }
@@ -252,6 +248,6 @@ export class DeepseekAdapter extends CloudDocAdapter {
     const markdown = htmlToMarkdown(mainContent);
     const prices = this.parsePriceTable(markdown);
 
-    return this.makePriceResult(prices, url, { updateDate: undefined });
+    return this.makePriceResult(prices, { updateDate: undefined });
   }
 }

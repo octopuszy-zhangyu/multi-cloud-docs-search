@@ -47,34 +47,14 @@ export class CucloudAdapter extends CloudDocAdapter {
         }));
         return this.productListCache;
     }
-    paginate(items, page = 1, pageSize = 100) {
-        const start = (page - 1) * pageSize;
-        const paged = items.slice(start, start + pageSize);
-        return {
-            items: paged,
-            total: items.length,
-            page,
-            pageSize,
-            hasMore: start + pageSize < items.length,
-        };
-    }
     async listProducts(options) {
         const products = await this.getProductsFromSearch();
         let mapped = products.map((p) => ({
             productId: p.productId,
             name: p.name,
-            description: "",
         }));
         // Keyword filtering
-        if (options?.keyword) {
-            const keywords = options.keyword.trim().split(/\s+/).filter(Boolean);
-            if (keywords.length > 0) {
-                mapped = mapped.filter(item => {
-                    const text = (item.name || "").toLowerCase();
-                    return keywords.every(kw => text.includes(kw.toLowerCase()));
-                });
-            }
-        }
+        mapped = this.filterByKeywords(mapped, options?.keyword);
         // Pagination
         const page = options?.page ?? 1;
         const pageSize = options?.pageSize ?? 100;
@@ -139,15 +119,7 @@ export class CucloudAdapter extends CloudDocAdapter {
         }
         let items = Array.from(tocMap.values());
         // Keyword filtering
-        if (options?.keyword) {
-            const keywords = options.keyword.trim().split(/\s+/).filter(Boolean);
-            if (keywords.length > 0) {
-                items = items.filter(item => {
-                    const text = (item.title || "").toLowerCase();
-                    return keywords.every(kw => text.includes(kw.toLowerCase()));
-                });
-            }
-        }
+        items = this.filterByKeywords(items, options?.keyword);
         // Top-only: strip children
         if (options?.topOnly) {
             items = items.map(item => ({ pageId: item.pageId, title: item.title }));
@@ -177,14 +149,12 @@ export class CucloudAdapter extends CloudDocAdapter {
             return {
                 pageId,
                 title: doc.title.replace(/<[^>]+>/g, ""),
-                note: doc.update_date || "",
                 contentPath: `${SUPPORT_URL}/document/${pageId}.html`,
             };
         }
         return {
             pageId,
             title: "",
-            note: "",
             contentPath: `${SUPPORT_URL}/document/${pageId}.html`,
         };
     }
@@ -223,7 +193,7 @@ export class CucloudAdapter extends CloudDocAdapter {
             return "无法获取文档内容";
         }
     }
-    parsePriceTable(markdown, source) {
+    parsePriceTable(markdown) {
         const lines = markdown.split("\n");
         const prices = [];
         let inTable = false;
@@ -268,12 +238,9 @@ export class CucloudAdapter extends CloudDocAdapter {
                     }
                     prices.push({
                         productName,
-                        specification,
                         billingMode,
                         price,
                         unit,
-                        currency: "CNY",
-                        source,
                     });
                 }
             }
@@ -289,7 +256,6 @@ export class CucloudAdapter extends CloudDocAdapter {
             provider: this.provider,
             name: this.name,
             prices: [],
-            source: `${SUPPORT_URL}/document/${productId || ""}.html`,
         };
         if (!productId) {
             return result;
@@ -304,10 +270,9 @@ export class CucloudAdapter extends CloudDocAdapter {
                     if (data.data?.docList && data.data.docList.length > 0) {
                         const doc = data.data.docList[0];
                         const content = doc.content.replace(/<[^>]+>/g, "");
-                        const prices = this.parsePriceTable(content, `${SUPPORT_URL}/document/${doc.document_id}.html`);
+                        const prices = this.parsePriceTable(content);
                         if (prices.length > 0) {
                             result.prices = prices;
-                            result.source = `${SUPPORT_URL}/document/${doc.document_id}.html`;
                             break;
                         }
                     }
@@ -321,13 +286,14 @@ export class CucloudAdapter extends CloudDocAdapter {
                 const dailyPrices = await this.extractDailyUnitPrices(productId);
                 if (dailyPrices.length > 0) {
                     result.prices = dailyPrices;
-                    result.source = "从搜索结果摘要中提取的按日单价";
                 }
             }
         }
         catch {
             // Return empty prices if unable to fetch
         }
+        // 设置数据完整性标记
+        result.dataStatus = result.prices.length > 0 ? "partial" : "no_data";
         return result;
     }
     /** 从搜索结果中提取按日单价 */
@@ -352,23 +318,17 @@ export class CucloudAdapter extends CloudDocAdapter {
                             if (vcpuPrice > 0) {
                                 prices.push({
                                     productName: "云服务器 ECS",
-                                    specification: "vCPU",
                                     billingMode: "按量计费（日单价）",
                                     price: vcpuPrice,
                                     unit: "核/日",
-                                    currency: "CNY",
-                                    source: `${SUPPORT_URL}/document/${doc.document_id}.html`,
                                 });
                             }
                             if (memPrice > 0) {
                                 prices.push({
                                     productName: "云服务器 ECS",
-                                    specification: "内存",
                                     billingMode: "按量计费（日单价）",
                                     price: memPrice,
                                     unit: "GB/日",
-                                    currency: "CNY",
-                                    source: `${SUPPORT_URL}/document/${doc.document_id}.html`,
                                 });
                             }
                             if (prices.length > 0)
