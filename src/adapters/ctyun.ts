@@ -21,7 +21,6 @@ export class CtyunAdapter extends CloudDocAdapter {
         result.push({
           productId: p.bookId,
           name: this.clean(p.bookName),
-          description: this.clean(p.note),
         });
       }
     }
@@ -125,30 +124,6 @@ export class CtyunAdapter extends CloudDocAdapter {
     result = result.replace(/\\/g, "");
     result = result.replace(/\s+/g, " ").trim();
     return result;
-  }
-
-  /** 按关键词过滤项目（AND 逻辑） */
-  private filterByKeywords<T extends { name?: string; title?: string }>(items: T[], keyword?: string): T[] {
-    if (!keyword) return items;
-    const keywords = keyword.trim().split(/\s+/).filter(Boolean);
-    if (keywords.length === 0) return items;
-    return items.filter((item) => {
-      const text = (item.name || item.title || "").toLowerCase();
-      return keywords.every((kw) => text.includes(kw.toLowerCase()));
-    });
-  }
-
-  /** 分页处理 */
-  private paginate<T>(items: T[], page: number = 1, pageSize: number = 100): PaginatedResult<T> {
-    const start = (page - 1) * pageSize;
-    const paged = items.slice(start, start + pageSize);
-    return {
-      items: paged,
-      total: items.length,
-      page,
-      pageSize,
-      hasMore: start + pageSize < items.length,
-    };
   }
 
   /**

@@ -52,16 +52,12 @@ export class DeepseekAdapter extends CloudDocAdapter {
   }
 
   async listProducts(options?: ListProductsOptions): Promise<PaginatedResult<Product>> {
-    const allProducts: Product[] = [
+    return this.paginateProducts([
       {
         productId: "api-docs",
         name: "DeepSeek API 文档",
-        description: "DeepSeek API 官方文档",
       },
-    ];
-
-    const filtered = this.filterByKeywords(allProducts, options?.keyword);
-    return this.paginate(filtered, options?.page, options?.pageSize);
+    ], options);
   }
 
   async getDocumentToc(productId: string, options?: TocOptions): Promise<PaginatedResult<TocItem>> {
@@ -110,28 +106,6 @@ export class DeepseekAdapter extends CloudDocAdapter {
     }
 
     return this.paginate(filtered, options?.page, options?.pageSize ?? 200);
-  }
-
-  private filterByKeywords<T extends { name?: string; title?: string }>(items: T[], keyword?: string): T[] {
-    if (!keyword) return items;
-    const keywords = keyword.trim().split(/\s+/).filter(Boolean);
-    if (keywords.length === 0) return items;
-    return items.filter(item => {
-      const text = (item.name || item.title || "").toLowerCase();
-      return keywords.every(kw => text.includes(kw.toLowerCase()));
-    });
-  }
-
-  private paginate<T>(items: T[], page: number = 1, pageSize: number = 100): PaginatedResult<T> {
-    const start = (page - 1) * pageSize;
-    const paged = items.slice(start, start + pageSize);
-    return {
-      items: paged,
-      total: items.length,
-      page,
-      pageSize,
-      hasMore: start + pageSize < items.length,
-    };
   }
 
   async searchDocuments(productId: string, keyword: string): Promise<SearchResult[]> {
@@ -278,21 +252,6 @@ export class DeepseekAdapter extends CloudDocAdapter {
     const markdown = htmlToMarkdown(mainContent);
     const prices = this.parsePriceTable(markdown);
 
-    // 标记数据状态
-    let dataStatus: "complete" | "partial" | "no_price" | "no_data" = "no_data";
-    if (prices.length > 0 && prices[0].price > 0) {
-      dataStatus = "complete";
-    } else if (prices.length > 0 && prices[0].price === 0) {
-      dataStatus = "no_price";
-    }
-
-    return {
-      provider: this.provider,
-      name: this.name,
-      prices,
-      source: "https://api-docs.deepseek.com/quick_start/pricing",
-      updateDate: undefined,
-      dataStatus,
-    };
+    return this.makePriceResult(prices, url, { updateDate: undefined });
   }
 }

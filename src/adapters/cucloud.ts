@@ -80,36 +80,16 @@ export class CucloudAdapter extends CloudDocAdapter {
     return this.productListCache;
   }
 
-  private paginate<T>(items: T[], page: number = 1, pageSize: number = 100): PaginatedResult<T> {
-    const start = (page - 1) * pageSize;
-    const paged = items.slice(start, start + pageSize);
-    return {
-      items: paged,
-      total: items.length,
-      page,
-      pageSize,
-      hasMore: start + pageSize < items.length,
-    };
-  }
-
   async listProducts(options?: ListProductsOptions): Promise<PaginatedResult<Product>> {
     const products = await this.getProductsFromSearch();
     let mapped = products.map((p) => ({
       productId: p.productId,
       name: p.name,
-      description: "",
+      
     }));
 
     // Keyword filtering
-    if (options?.keyword) {
-      const keywords = options.keyword.trim().split(/\s+/).filter(Boolean);
-      if (keywords.length > 0) {
-        mapped = mapped.filter(item => {
-          const text = (item.name || "").toLowerCase();
-          return keywords.every(kw => text.includes(kw.toLowerCase()));
-        });
-      }
-    }
+    mapped = this.filterByKeywords(mapped, options?.keyword);
 
     // Pagination
     const page = options?.page ?? 1;
@@ -182,15 +162,7 @@ export class CucloudAdapter extends CloudDocAdapter {
     let items = Array.from(tocMap.values());
 
     // Keyword filtering
-    if (options?.keyword) {
-      const keywords = options.keyword.trim().split(/\s+/).filter(Boolean);
-      if (keywords.length > 0) {
-        items = items.filter(item => {
-          const text = (item.title || "").toLowerCase();
-          return keywords.every(kw => text.includes(kw.toLowerCase()));
-        });
-      }
-    }
+    items = this.filterByKeywords(items, options?.keyword);
 
     // Top-only: strip children
     if (options?.topOnly) {

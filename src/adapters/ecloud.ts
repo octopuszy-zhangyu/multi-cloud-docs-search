@@ -91,7 +91,6 @@ export class EcloudAdapter extends CloudDocAdapter {
             products.push({
               productId: String(node.id),
               name: node.name,
-              description: parentName,
             });
           }
         }
@@ -119,7 +118,7 @@ export class EcloudAdapter extends CloudDocAdapter {
         products.push({
           productId: match[1],
           name: title,
-          description: "",
+          description: undefined,
         });
       }
     });
@@ -178,7 +177,7 @@ export class EcloudAdapter extends CloudDocAdapter {
       if (options?.topOnly) {
         filtered = filtered.map(item => ({ pageId: item.pageId, title: item.title }));
       }
-      return this.paginate(filtered, options?.page, options?.pageSize, 200);
+      return this.paginate(filtered, options?.page, options?.pageSize);
     }
 
     const url = `${OUTLINE_TREE_API}?outlineId=${outlineId}`;
@@ -187,7 +186,7 @@ export class EcloudAdapter extends CloudDocAdapter {
     const items: TocItem[] = [];
     const seen = new Set<string>();
 
-    if (!data?.data?.children) return this.paginate([], options?.page, options?.pageSize, 200);
+    if (!data?.data?.children) return this.paginate([], options?.page, options?.pageSize);
 
     const extractArticles = (nodes: OutlineNode[]) => {
       for (const node of nodes) {
@@ -212,30 +211,7 @@ export class EcloudAdapter extends CloudDocAdapter {
     if (options?.topOnly) {
       filtered = filtered.map(item => ({ pageId: item.pageId, title: item.title }));
     }
-    return this.paginate(filtered, options?.page, options?.pageSize, 200);
-  }
-
-  private filterByKeywords<T extends { name?: string; title?: string }>(items: T[], keyword?: string): T[] {
-    if (!keyword) return items;
-    const keywords = keyword.trim().split(/\s+/).filter(Boolean);
-    if (keywords.length === 0) return items;
-    return items.filter(item => {
-      const text = (item.name || item.title || "").toLowerCase();
-      return keywords.every(kw => text.includes(kw.toLowerCase()));
-    });
-  }
-
-  private paginate<T>(items: T[], page: number = 1, pageSize: number = 100, defaultPageSize?: number): PaginatedResult<T> {
-    const effectivePageSize = pageSize || defaultPageSize || 100;
-    const start = (page - 1) * effectivePageSize;
-    const paged = items.slice(start, start + effectivePageSize);
-    return {
-      items: paged,
-      total: items.length,
-      page,
-      pageSize: effectivePageSize,
-      hasMore: start + effectivePageSize < items.length,
-    };
+    return this.paginate(filtered, options?.page, options?.pageSize);
   }
 
   async searchDocuments(productId: string, keyword: string): Promise<SearchResult[]> {

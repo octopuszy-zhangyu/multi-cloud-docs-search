@@ -183,4 +183,97 @@ export abstract class CloudDocAdapter {
 
   /** 获取产品价格信息 */
   abstract getProductPrice(productId?: string, options?: PriceQueryOptions): Promise<PriceResult>;
+
+  // ========== 可重用的辅助方法 ==========
+
+  /**
+   * 按关键词过滤列表（AND 逻辑，关键词以空格分隔，大小写不敏感）
+   */
+  protected filterByKeywords<T extends { name?: string; title?: string }>(items: T[], keyword?: string): T[] {
+    if (!keyword) return items;
+    const keywords = keyword.trim().split(/\s+/).filter(Boolean);
+    if (keywords.length === 0) return items;
+    return items.filter(item => {
+      const text = (item.name || item.title || "").toLowerCase();
+      return keywords.every(kw => text.includes(kw.toLowerCase()));
+    });
+  }
+
+  /**
+   * 数组分页包装
+   */
+  protected paginate<T>(items: T[], page: number = 1, pageSize: number = 100): PaginatedResult<T> {
+    const start = (page - 1) * pageSize;
+    const paged = items.slice(start, start + pageSize);
+    return {
+      items: paged,
+      total: items.length,
+      page,
+      pageSize,
+      hasMore: start + pageSize < items.length,
+    };
+  }
+
+  /**
+   * 合并 filterByKeywords + paginate 的快捷方法
+   */
+  protected paginateProducts(products: Product[], options?: ListProductsOptions): PaginatedResult<Product> {
+    const filtered = this.filterByKeywords(products, options?.keyword);
+    return this.paginate(filtered, options?.page ?? 1, options?.pageSize ?? 100);
+  }
+
+  /**
+   * 根据价格数组判断数据状态
+   */
+  protected determineDataStatus(prices: PriceItem[]): "complete" | "partial" | "no_price" | "no_data" {
+    if (prices.length > 0 && prices[0].price > 0) return "complete";
+    if (prices.length > 0 && prices[0].price === 0) return "no_price";
+    return "no_data";
+  }
+
+  /**
+   * 构造 PriceResult 的快捷方法
+   */
+  protected makePriceResult(prices: PriceItem[], source: string, extra?: Partial<PriceResult>): PriceResult {
+    return {
+      provider: this.provider,
+      name: this.name,
+      prices,
+      source,
+      dataStatus: this.determineDataStatus(prices),
+      ...extra,
+    };
+  }
+
+  /**
+   * 解析 Markdown 表格行，返回二维字符串数组
+   * 子类可基于此构建 PriceItem
+   */
+  protected parseMarkdownTable(markdown: string): { headers: string[]; rows: string[][] } {
+    const lines = markdown.split("\n");
+    const headers: string[] = [];
+    const rows: string[][] = [];
+    let inTable = false;
+
+    for (const line of lines) {
+      if (line.trim().startsWith("|") && line.trim().endsWith("|")) {
+        const cells = line.split("|").map(c => c.trim()).filter(Boolean);
+        if (!inTable) {
+          headers.push(...cells);
+          inTable = true;
+          continue;
+        }
+        if (cells.every(c => /^[-:\s]+$/.test(c))) continue;
+        if (cells.length >= 2) {
+          rows.push(cells);
+        }
+        continue;
+      }
+      if (inTable && line.trim() !== "") {
+        inTable = false;
+      }
+    }
+
+    return { headers, rows };
+  }
 }

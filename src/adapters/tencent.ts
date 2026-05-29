@@ -30,7 +30,7 @@ export class TencentAdapter extends CloudDocAdapter {
           products.push({
             productId,
             name,
-            description: "",
+            
           });
         }
       }
@@ -49,7 +49,7 @@ export class TencentAdapter extends CloudDocAdapter {
           products.push({
             productId,
             name,
-            description: "",
+            
           });
         }
       }
@@ -182,7 +182,7 @@ export class TencentAdapter extends CloudDocAdapter {
           results.push({
             pageId: item.pageId,
             title: item.title,
-            description: undefined,
+            
           });
         }
         if (item.children) {
@@ -566,31 +566,4 @@ export class TencentAdapter extends CloudDocAdapter {
     return prices;
   }
 
-  /**
-   * 按关键词过滤列表（AND 逻辑，关键词以空格分隔）
-   */
-  private filterByKeywords<T extends { name?: string; title?: string }>(items: T[], keyword?: string): T[] {
-    if (!keyword) return items;
-    const keywords = keyword.trim().split(/\s+/).filter(Boolean);
-    if (keywords.length === 0) return items;
-    return items.filter(item => {
-      const text = (item.name || item.title || "").toLowerCase();
-      return keywords.every(kw => text.includes(kw.toLowerCase()));
-    });
-  }
-
-  /**
-   * 分页包装
-   */
-  private paginate<T>(items: T[], page: number = 1, pageSize: number = 100): PaginatedResult<T> {
-    const start = (page - 1) * pageSize;
-    const paged = items.slice(start, start + pageSize);
-    return {
-      items: paged,
-      total: items.length,
-      page,
-      pageSize,
-      hasMore: start + pageSize < items.length,
-    };
-  }
 }

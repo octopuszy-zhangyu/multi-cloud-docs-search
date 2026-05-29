@@ -17,16 +17,12 @@ export class KimiAdapter extends CloudDocAdapter {
    * Kimi 只有一个产品：Kimi API 文档
    */
   async listProducts(options?: ListProductsOptions): Promise<PaginatedResult<Product>> {
-    const allProducts: Product[] = [
+    return this.paginateProducts([
       {
         productId: "kimi-api",
         name: "Kimi API 文档",
-        description: "月之暗面 Kimi 开放平台 API 文档",
       },
-    ];
-
-    const filtered = this.filterByKeywords(allProducts, options?.keyword);
-    return this.paginate(filtered, options?.page ?? 1, options?.pageSize ?? 100);
+    ], options);
   }
 
   /**
@@ -153,34 +149,6 @@ export class KimiAdapter extends CloudDocAdapter {
       .trim();
 
     return cleaned || "(空内容)";
-  }
-
-  /**
-   * 按关键词过滤条目（AND 逻辑，大小写不敏感）
-   */
-  private filterByKeywords<T extends { name?: string; title?: string }>(items: T[], keyword?: string): T[] {
-    if (!keyword) return items;
-    const keywords = keyword.trim().split(/\s+/).filter(Boolean);
-    if (keywords.length === 0) return items;
-    return items.filter((item) => {
-      const text = (item.name || item.title || "").toLowerCase();
-      return keywords.every((kw) => text.includes(kw.toLowerCase()));
-    });
-  }
-
-  /**
-   * 对数组进行分页包装
-   */
-  private paginate<T>(items: T[], page: number = 1, pageSize: number = 100): PaginatedResult<T> {
-    const start = (page - 1) * pageSize;
-    const paged = items.slice(start, start + pageSize);
-    return {
-      items: paged,
-      total: items.length,
-      page,
-      pageSize,
-      hasMore: start + pageSize < items.length,
-    };
   }
 
   /**
@@ -381,21 +349,6 @@ export class KimiAdapter extends CloudDocAdapter {
       }
     }
 
-    // 标记数据状态
-    let dataStatus: "complete" | "partial" | "no_price" | "no_data" = "no_data";
-    if (allPrices.length > 0 && allPrices[0].price > 0) {
-      dataStatus = "complete";
-    } else if (allPrices.length > 0 && allPrices[0].price === 0) {
-      dataStatus = "no_price";
-    }
-
-    return {
-      provider: this.provider,
-      name: this.name,
-      prices: allPrices,
-      source: `${BASE_URL}/docs/pricing`,
-      updateDate: undefined,
-      dataStatus,
-    };
+    return this.makePriceResult(allPrices, `${BASE_URL}/docs/pricing`, { updateDate: undefined });
   }
 }
