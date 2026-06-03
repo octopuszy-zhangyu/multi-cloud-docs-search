@@ -29,7 +29,7 @@ src/
 | `search_documents` | provider, productId, keyword | 搜索文档（支持关键词自动扩展） |
 | `get_page_metadata` | provider, pageId | 获取页面元信息（contentPath 已统一为完整 URL） |
 | `get_page_content` | provider, contentPath | 获取 Markdown 正文 |
-| `get_product_price` | provider, productId?, quick? | 获取产品价格（quick=true 返回定价页 URL，false 动态获取价格数据） |
+| `get_product_price` | provider, productId? | 获取产品价格（动态获取实时数据） |
 
 ### 调用规范
 
@@ -41,9 +41,8 @@ src/
 
 ### 价格查询流程
 
-1. **优先 `get_product_price(quick=true)`**：已知产品 ID 时，直接获取定价页面 URL
-2. **`search_documents` 搜宽泛关键词**：用"价格""计费"等
-3. **`get_product_price` 回退**：文档找不到价格时调用
+1. **`get_product_price` 直接调用**：获取实时价格数据
+2. **`search_documents` 搜宽泛关键词**：用"价格""计费"等（文档找不到价格时回退）
 
 ## 适配器统一规范（重要）
 
@@ -202,19 +201,19 @@ src/
 
 ## 价格获取策略
 
-| 厂商 | 文档价格 | get_product_price | quick=true |
-|------|---------|-------------------|------------|
-| deepseek/minimax/kimi | 定价文档 | ✅ 可用 | ✅ 支持 |
-| bailian | `/zh/model-studio/billing` | ✅ 文档解析 | ✅ 支持 |
-| glm | `open.bigmodel.cn/pricing` SPA | ⚠️ SPA | ✅ 支持 |
-| ctyun | 文档计费说明 | ✅ 内部价格计算器 API（ECS 规格询价 + 云电脑组件价格） | ✅ 支持 |
-| aliyun | 文档计费说明 | ✅ ECS：价格计算器 API（实例/系统盘/数据盘/带宽）；百炼：文档解析 | ✅ 支持 |
-| volcengine | 文档计费规则 | ✅ GetTable API | ✅ 支持 |
-| tencent | 文档计费说明 | ✅ CVM API | ✅ 支持 |
-| huawei | 文档计费说明 | ✅ export/productlist API（标注来源） | ✅ 支持 |
-| ecloud | 文档价格页面 | ⚠️ 待完善 | ✅ 支持 |
-| cucloud | 文档价格页面 | ⚠️ 待完善 | ❌ 待完善 |
-| baidu | 产品页内嵌数据 | ⚠️ 待完善 | ✅ 支持 |
+| 厂商 | 文档价格 | get_product_price |
+|------|---------|-------------------|
+| deepseek/minimax/kimi | 定价文档 | ✅ 可用 |
+| bailian | `/zh/model-studio/billing` | ✅ 文档解析 |
+| glm | `open.bigmodel.cn/pricing` SPA | ⚠️ SPA |
+| ctyun | 文档计费说明 | ✅ 内部价格计算器 API（ECS 规格询价 + 云电脑组件价格） |
+| aliyun | 文档计费说明 | ✅ ECS：价格计算器 API（实例/系统盘/数据盘/带宽）；百炼：文档解析 |
+| volcengine | 文档计费规则 | ✅ GetTable API |
+| tencent | 文档计费说明 | ✅ CVM API |
+| huawei | 文档计费说明 | ✅ export/productlist API（标注来源） |
+| ecloud | 文档价格页面 | ⚠️ 待完善 |
+| cucloud | 文档价格页面 | ⚠️ 待完善 |
+| baidu | 产品页内嵌数据 | ⚠️ 待完善 |
 
 ## 常用产品 bookId
 
@@ -318,9 +317,12 @@ const price = await adapter.getProductPrice(productId);
 ### 常用命令
 
 ```bash
-npm run start    # 启动 MCP Server
-npm run dev      # 开发模式（文件监听）
-npm run build    # TypeScript 编译检查
+npm run start      # 启动 MCP Server
+npm run dev        # 开发模式（文件监听）
+npm run build      # TypeScript 编译检查
+npm run test       # 适配器层测试 + 数据质量验证（本项目的主要测试命令）
+npm run test:mcp   # MCP 协议层测试（独立启动 Server）
+npm run test:retest # 修复复测（只测上次失败的用例）
 # MCP Inspector 调试：
 npx @modelcontextprotocol/inspector npx tsx src/stdio.ts
 ```
@@ -350,7 +352,9 @@ npx @modelcontextprotocol/inspector npx tsx src/stdio.ts
 - [ ] 价格查询返回了 `dataStatus`
 - [ ] PriceItem 无 specification/currency/source/note
 - [ ] 用 `makePriceResult(prices, extra?)` 构造（无 source 参数）
-- [ ] 全流程穿测通过
+- [ ] 全流程穿测通过（`npm run test`）
+- [ ] 数据质量检查：抽样验证字段完整性、无异常数据
+- [ ] 检查 `scripts/lib/types.ts` 中 `TEST_PROVIDERS` 配置是否完整
 
 ### 验证指标
 
@@ -362,28 +366,146 @@ npx @modelcontextprotocol/inspector npx tsx src/stdio.ts
 | 搜索功能 | 返回结果数组，非空时含 pageId |
 | 编译 | `tsc --noEmit` 0 错误 |
 
-### 验证命令
+### 全量穿测规范
 
-```bash
-# 天翼云完整链路
-list_products({ provider: "ctyun" })
-get_document_toc({ provider: "ctyun", productId: "10027004" })
-search_documents({ provider: "ctyun", productId: "10027004", keyword: "登录" })
-get_page_metadata({ provider: "ctyun", pageId: "10028086" })
+每次代码变更后，必须运行全量穿测脚本，确保所有云厂商的 6 个核心工具函数返回正确结果。
 
-# 价格获取
-get_product_price({ provider: "deepseek" })
-get_product_price({ provider: "ctyun", productId: "10026730" })
-get_product_price({ provider: "aliyun", productId: "ecs" })
-get_product_price({ provider: "tencent", productId: "cvm" })
-get_product_price({ provider: "huawei" })
+#### 测试架构
+
+测试系统分为三层，覆盖不同维度的验证：
+
+```
+┌─────────────────────────────────────────────────────┐
+│                  测试编排层                           │
+│  scripts/test-all-providers.ts (主入口)              │
+│  读取配置 → 按厂商/产品循环 → 收集结果 → 生成报告     │
+└──────────────────────┬──────────────────────────────┘
+                       │
+          ┌────────────┼────────────┐
+          ▼            ▼            ▼
+┌─────────────────┐ ┌──────────┐ ┌──────────────────┐
+│  适配器层测试     │ │ MCP协议层 │ │  数据质量验证层    │
+│  (直接调用函数)   │ │ (JSON-RPC)│ │  (内容抽样/异常)   │
+│  快速验证逻辑     │ │ 端到端验证│ │  深度检查数据      │
+└─────────────────┘ └──────────┘ └──────────────────┘
 ```
 
-### 验证原则
-- 每次代码变更后必须执行编译检查 + 核心功能穿测
-- 覆盖：≥1 传统云厂商完整链路 + ≥1 AI 厂商链路 + ≥1 价格查询
+#### 测试命令
+
+| 命令 | 模式 | 用途 | 速度 |
+|------|------|------|------|
+| `npm run test` | 适配器层 | 快速验证 + 数据质量检查 | ~2min |
+| `npm run test:mcp` | MCP 协议层 | 独立启动 Server 端到端测试 | ~3min |
+| `npm run test:retest` | 修复复测 | 只测上次失败的用例 | 最快 |
+
+#### 测试脚本结构
+
+```
+scripts/
+├── test-all-providers.ts      # 主入口 - 适配器层测试 + 数据质量验证
+├── test-mcp-protocol.ts       # MCP 协议层测试（独立启动 Server）
+├── test-retest.ts             # 修复复测（读取上次失败记录）
+├── lib/
+│   ├── types.ts               # 共享类型定义 + 测试配置
+│   ├── reporter.ts            # 报告生成器（终端 + JSON + Markdown）
+│   ├── quality.ts             # 数据质量验证（内容抽样 + 异常检测）
+│   └── mcp-client.ts          # MCP JSON-RPC 客户端
+└── reports/                   # 测试报告输出目录
+```
+
+#### 测试产品覆盖
+
+测试覆盖三类核心产品：**ECS**、**云电脑/云桌面**、**Token/模型服务**。
+
+| 厂商 | ECS | 云电脑/云桌面 | Token/模型服务 |
+|------|-----|--------------|---------------|
+| **ctyun** | ✅ 10026730 | ✅ 10027004 (云电脑) | ✅ 11061839 (Token服务) |
+| **aliyun** | ✅ ecs | ✅ wuying-workspace (无影云电脑) | - |
+| **volcengine** | ✅ 6396 | ❌ 无此产品 | ✅ 火山方舟 (定价页) |
+| **tencent** | ✅ 213 | ✅ 1291 (云桌面) | ✅ 1823 (TokenHub) |
+| **huawei** | ✅ ecs | ✅ workspace (云桌面) | ✅ maas (MaaS模型即服务) |
+| **ecloud** | ✅ 706 | ✅ 1246 (云电脑) | ✅ 1456 (MoMA模型服务) |
+| **cucloud** | ✅ 128 | ✅ 2267 (联通云桌面) | ✅ 2357 (AISP AI服务) |
+| **baidu** | BCC | ❌ 无此产品 | ✅ BML (AI开发平台) |
+| **deepseek** | - | - | ✅ (API定价=Token价格) |
+| **glm** | - | - | ✅ (API定价=Token价格) |
+| **minimax** | - | - | ✅ (API定价=Token价格) |
+| **kimi** | - | - | ✅ (API定价=Token价格) |
+| **bailian** | - | - | ✅ (API定价=Token价格) |
+
+#### 穿测覆盖范围
+
+| 工具函数 | 测试内容 | 验证标准 |
+|----------|---------|---------|
+| `list_products` | 每个厂商调用一次 | 返回 `PaginatedResult`，含 items/total/page/pageSize/hasMore |
+| `get_document_toc` | 每个产品调用一次 | 返回 `PaginatedResult`，total > 0 |
+| `search_documents` | 每个产品搜索"价格" | 返回 `SearchResult[]`，格式正确 |
+| `get_page_metadata` | 从目录取第一个有效 pageId | 返回 `PageMetadata`，含 title/contentPath |
+| `get_page_content` | 用 metadata 的 contentPath | 返回非空 Markdown 字符串 |
+| `get_product_price` | 每个产品调用一次 | 返回 `PriceResult`，含 dataStatus/prices |
+
+#### 数据质量验证
+
+测试不只看数据返回条数，更进行抽样检查，避免有数据但是异常数据：
+
+| 检查项 | 检测内容 | 严重度 |
+|--------|---------|--------|
+| 字段完整性 | 必填字段是否为空 | error |
+| 字段合理性 | price 是否为负数、title 是否过长 | error/warning |
+| HTML 残留 | productName 是否包含 `<tag>` 标签 | warning |
+| 编码问题 | 是否包含乱码字符 | error |
+| 重复数据 | 相同 pageId/title 出现多次 | warning |
+| 格式一致性 | 所有条目的字段结构是否一致 | warning |
+
+#### 测试报告
+
+每次测试生成三种格式的报告：
+
+1. **终端输出**：彩色实时显示，包含失败详情和堆栈
+2. **JSON 报告** (`reports/test-report-{timestamp}.json`)：机器可解析，含完整 debug 信息
+3. **Markdown 报告** (`reports/test-report-{timestamp}.md`)：可读性强，含修复建议
+
+#### 修复流程
+
+```
+测试失败 → 生成报告（含 debug 信息：请求参数、响应数据、堆栈）
+    ↓
+分析根因 → 生成修复建议（写入报告）
+    ↓
+执行修复（手动或自动）
+    ↓
+npm run test:retest → 只测失败用例
+    ↓
+全部通过 → 全量回归测试 (npm run test)
+```
+
+#### 穿测通过标准
+
+1. **所有厂商 6 个工具函数全部通过**（已知问题除外）
+2. **已知问题**（如 volcengine API 变更）需在测试结果中明确标记，并在 FAQ 中记录
+3. **新增适配器**必须 6/6 全部通过
+4. **回归测试**确保未修改厂商不受影响
+
+#### 失败处理
+
+| 失败类型 | 处理方式 |
+|----------|---------|
+| 新增适配器失败 | 必须修复后才能提交 |
+| 已有厂商回归失败 | 检查是否因代码变更导致，修复或回退 |
+| 厂商 API 变更 | 更新适配器适配新 API，更新 FAQ |
+| 网络超时 | 重试 2 次，仍失败则标记为环境问题 |
+
+#### 测试配置
+
+测试配置位于 `scripts/lib/types.ts` 中的 `TEST_PROVIDERS` 常量。**新增适配器时**，必须在此配置中添加对应的测试产品（ECS + 云电脑 + Token 三类）。
+
+#### 验证原则
+- 每次代码变更后必须执行编译检查 + 全量穿测
+- 覆盖：所有 13 个云厂商的 6 个核心工具函数
 - 检查返回数据格式符合预期
+- 数据质量验证：抽样检查字段完整性、合理性、异常数据
 - 回归测试确保未修改厂商不受影响
+- 新增适配器必须 6/6 全部通过
 
 ## FAQ
 
@@ -391,7 +513,11 @@ get_product_price({ provider: "huawei" })
 |------|------|------|
 | `getDocumentToc` 返回空 | 厂商文档站改版/API 变化 | 检查 HTML 结构 |
 | `getPageContent` 返回空或 HTML | 页面为 SPA 渲染 | 检查厂商前端框架 |
-| `getProductPrice` 返回 `dataStatus: "no_price"` | 厂商文档不列价格 | 用 `get_product_price(quick=true)` 获定价页 URL |
+| `getProductPrice` 返回 `dataStatus: "no_price"` | 厂商文档不列价格 | 访问官网价格计算器 |
 | 编译错误 `not assignable to type` | 返回类型与基类不匹配 | 检查签名一致性 |
+| 中文乱码 | 编码检测失败 | 天翼云用 GBK 编码检测器 |
+| volcengine get_page_metadata 报错 `Cannot read properties of undefined` | 火山引擎文档 API `/api/doc/getDocDetail` 已不再公开返回文档内容（HasPass=false） | 需要重新研究内容获取方式（如解析 HTML 页面），当前 getDocList API 仍正常工作 |
 | MCP 无响应 | stdout 被 `console.log` 污染 | 改为 `console.error` |
 | 中文乱码 | 编码检测失败 | 天翼云用 GBK 编码检测器 |
+| 测试报告显示大量重复价格数据 | 部分厂商（华为云、腾讯云）价格数据按地域/规格重复，属于正常业务数据 | 检查重复 key 是否合理，如 `productName` 相同但 `region` 不同则正常 |
+| 测试报告显示 HTML 残留 | 部分厂商（MiniMax）的 productName 包含 `<br />` 等 HTML 标签 | 需要在适配器中清理 HTML 标签后再返回 |

@@ -35,7 +35,9 @@
     "start": "node dist/stdio.js",
     "dev": "npx tsx watch src/stdio.ts",
     "build": "npx tsc",
-    "test": "vitest run",
+    "test": "npx tsx scripts/test-all-providers.ts",
+    "test:mcp": "npx tsx scripts/test-mcp-protocol.ts",
+    "test:retest": "npx tsx scripts/test-all-providers.ts --retest",
     "test:watch": "vitest"
   },
   "dependencies": {

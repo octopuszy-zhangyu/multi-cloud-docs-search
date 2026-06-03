@@ -1,0 +1,32 @@
+[
+  {
+    "provider": "volcengine",
+    "productId": "6396",
+    "tool": "get_page_metadata",
+    "status": "fail",
+    "duration": 596,
+    "result": "调用失败",
+    "error": "Cannot read properties of undefined (reading 'Title')",
+    "debug": {
+      "request": {
+        "productId": "6396"
+      },
+      "stack": "TypeError: Cannot read properties of undefined (reading 'Title')\n    at VolcengineAdapter.getPageMetadata (C:\\Users\\steve\\Desktop\\multi-cloud-docs-search\\src\\adapters\\volcengine.ts:184:18)\n    at process.processTicksAndRejections (node:internal/process/task_queues:105:5)\n    at async <anonymous> (C:\\Users\\steve\\Desktop\\multi-cloud-docs-search\\scripts\\test-all-providers.ts:148:24)\n    at async runTest (C:\\Users\\steve\\Desktop\\multi-cloud-docs-search\\scripts\\test-all-providers.ts:255:24)\n    at async runTests (C:\\Users\\steve\\Desktop\\multi-cloud-docs-search\\scripts\\test-all-providers.ts:142:30)"
+    }
+  },
+  {
+    "provider": "volcengine",
+    "productId": "6396",
+    "tool": "get_page_content",
+    "status": "fail",
+    "duration": 639,
+    "result": "调用失败",
+    "error": "Cannot read properties of undefined (reading 'Title')",
+    "debug": {
+      "request": {
+        "productId": "6396"
+      },
+      "stack": "TypeError: Cannot read properties of undefined (reading 'Title')\n    at VolcengineAdapter.getPageMetadata (C:\\Users\\steve\\Desktop\\multi-cloud-docs-search\\src\\adapters\\volcengine.ts:184:18)\n    at process.processTicksAndRejections (node:internal/process/task_queues:105:5)\n    at async <anonymous> (C:\\Users\\steve\\Desktop\\multi-cloud-docs-search\\scripts\\test-all-providers.ts:163:26)\n    at async runTest (C:\\Users\\steve\\Desktop\\multi-cloud-docs-search\\scripts\\test-all-providers.ts:255:24)\n    at async runTests (C:\\Users\\steve\\Desktop\\multi-cloud-docs-search\\scripts\\test-all-providers.ts:157:29)"
+    }
+  }
+]

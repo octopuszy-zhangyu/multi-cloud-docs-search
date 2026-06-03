@@ -500,117 +500,16 @@ server.registerTool(
 ## 参数说明
 - provider：必填，厂商标识（见上表）
 - productId：可选，不填则返回该厂商所有产品价格
-- keyword：可选，用于过滤结果，如 "4C8G"、"按量"、"包月"、"华北"
-- quick：可选，true=快速返回定价页面 URL，false=获取详细价格数据（默认）`,
+- keyword：可选，用于过滤结果，如 "4C8G"、"按量"、"包月"、"华北"`,
     inputSchema: z.object({
       provider: z.string().describe("云厂商标识（必填）：aliyun/tencent/ctyun/huawei/volcengine/ecloud/cucloud/baidu/bailian/deepseek/glm/minimax/kimi"),
       productId: z.string().optional().describe("产品 ID（可选）。阿里云=ecs，腾讯云=cvm，天翼云=10027004(云电脑)/10026730(ECS)，华为云=ecs，火山引擎=ECS"),
-      quick: z.boolean().optional().describe("快速模式：true=返回定价页面 URL，false=获取详细价格（默认 false）"),
       page: z.number().optional().describe("页码，默认 1"),
       pageSize: z.number().optional().describe("每页条数，默认 100"),
       keyword: z.string().optional().describe("关键词过滤：规格（如 4C8G）、计费模式（按量/包月）、地域（华北）等"),
     }).strict(),
   },
-  async ({ provider, productId, quick, page, pageSize, keyword }: { provider: string; productId?: string; quick?: boolean; page?: number; pageSize?: number; keyword?: string }) => {
-    if (quick === true) {
-      const priceQuickMap: Record<string, Record<string, { url: string; description: string }[]>> = {
-        "ctyun": {
-          "10027004": [
-            { url: "https://www.ctyun.cn/document/10027004", description: "天翼云电脑（政企版）价格（注意：定价页面为 JavaScript 动态渲染，文档中可能无法获取完整价格数据）" },
-            { url: "https://www.ctyun.cn/price", description: "天翼云官网价格计算器（推荐：获取实时价格）" },
-          ],
-          "10026730": [
-            { url: "https://www.ctyun.cn/document/10026730", description: "弹性云主机 ECS 价格（注意：定价页面为 JavaScript 动态渲染，文档中可能无法获取完整价格数据）" },
-            { url: "https://www.ctyun.cn/price", description: "天翼云官网价格计算器（推荐：获取实时价格）" },
-          ],
-          "11061839": [{ url: "https://www.ctyun.cn/document/11061839", description: "Token 服务价格" }],
-        },
-        "aliyun": {
-          "ecs": [
-            { url: "https://help.aliyun.com/zh/ecs/billing", description: "云服务器 ECS 计费说明（仅含计费模式说明，无具体实例价格）" },
-            { url: "https://www.aliyun.com/price/product", description: "阿里云官网定价计算器（选择地域和实例规格后查询实时价格）" },
-          ],
-        },
-        "tencent": {
-          "cvm": [{ url: "https://buy.cloud.tencent.com/price/cvm/overview", description: "云服务器 CVM 价格概览" }],
-          "213": [{ url: "https://buy.cloud.tencent.com/price/cvm/overview", description: "云服务器 CVM 价格概览" }],
-        },
-        "huawei": {
-          "ecs": [{ url: "https://www.huaweicloud.com/pricing/calculator.html#/ecs", description: "弹性云服务器 ECS 价格计算器" }],
-          "maas": [{ url: "https://support.huaweicloud.com/price-maas/price-maas-0002.html", description: "MaaS 模型即服务价格" }],
-        },
-        "ecloud": {
-          "706": [{ url: "https://ecloud.10086.cn/op-help-center/doc/category/706", description: "云主机 ECS 价格" }],
-        },
-        "volcengine": {
-          "ECS": [{ url: "https://www.volcengine.com/pricing?product=ECS", description: "ECS 价格" }],
-        },
-        "deepseek": {
-          "api-docs": [{ url: "https://api-docs.deepseek.com/quick_start/pricing", description: "DeepSeek API 定价" }],
-        },
-        "minimax": {
-          "minimax-api": [{ url: "https://platform.minimaxi.com/docs/guides/pricing-paygo", description: "MiniMax 定价" }],
-        },
-        "kimi": {
-          "kimi-api": [{ url: "https://platform.kimi.com/docs/pricing", description: "Kimi API 定价" }],
-        },
-        "bailian": {
-          "model-studio": [{ url: "https://help.aliyun.com/zh/model-studio/billing", description: "百炼大模型服务平台计费说明" }],
-        },
-        "baidu": {
-          "BML": [{ url: "https://cloud.baidu.com/doc/BML/s/9kq7tfy4p", description: "BML 全功能AI开发平台价格" }],
-          "BCC": [
-            { url: "https://cloud.baidu.com/publicity/bccplus.html", description: "百度云 BCC 价格详情（外部页面，文档中无具体价格）" },
-            { url: "https://cloud.baidu.com/doc/BCC/index.html", description: "百度云 BCC 文档首页（仅含计费模式说明，无具体实例价格）" },
-          ],
-        },
-        "glm": {
-          "bigmodel": [{ url: "https://open.bigmodel.cn/pricing", description: "智谱 GLM 定价" }],
-        },
-        "cucloud": {
-          "128": [
-            { url: "https://support.cucloud.cn/document/128", description: "云服务器 ECS 价格（注意：定价页面返回 404，价格信息需从搜索摘要中提取）" },
-          ],
-          "2357": [{ url: "https://support.cucloud.cn/document/2357", description: "AI服务平台 AISP 价格" }],
-        },
-      };
-
-      const providerMap = priceQuickMap[provider];
-      if (!providerMap) {
-        return { content: [{ type: "text", text: JSON.stringify({ error: true, message: `不支持的 provider: ${provider}，或该厂商暂无定价页面速查数据`, provider }, null, 2) }] };
-      }
-
-      if (productId && providerMap[productId]) {
-        return {
-          content: [{
-            type: "text",
-            text: JSON.stringify({
-              provider,
-              productId,
-              quickLinks: providerMap[productId],
-              message: "以上为已知的定价页面 URL，可直接通过 get_page_metadata + get_page_content 获取价格信息，或传 quick=false 获取结构化价格数据",
-            }, null, 2),
-          }],
-        };
-      }
-
-      // 没有匹配的 productId，返回所有已知的定价页面
-      const allLinks = Object.entries(providerMap).flatMap(([pid, links]) =>
-        links.map(l => ({ productId: pid, ...l }))
-      );
-
-      return {
-        content: [{
-          type: "text",
-          text: JSON.stringify({
-            provider,
-            quickLinks: allLinks,
-            message: "以上为已知的定价页面 URL。如需查询具体产品价格，请指定 productId 参数，或传 quick=false 获取结构化价格数据",
-          }, null, 2),
-        }],
-      };
-    }
-
+  async ({ provider, productId, page, pageSize, keyword }: { provider: string; productId?: string; page?: number; pageSize?: number; keyword?: string }) => {
     try {
       const adapter = getAdapter(provider);
       const result = await adapter.getProductPrice(productId, { page, pageSize, keyword });
@@ -792,9 +691,9 @@ server.registerTool(
       // 构建 message 指引
       let message = "";
       if (result.dataStatus === "no_data" || result.dataStatus === "no_price") {
-        message = `价格数据状态：${result.dataStatus}。建议：传 quick=true 获取定价页面 URL，或访问官网价格计算器`;
+        message = `价格数据状态：${result.dataStatus}。建议：访问官网价格计算器查看实时价格`;
       } else if (prices.length === 0) {
-        message = "未找到匹配的价格数据。建议：使用 keyword 参数过滤（如 keyword=\"4C8G\"、\"按量\"、\"包月\"），或传 quick=true 获取定价页面 URL";
+        message = "未找到匹配的价格数据。建议：使用 keyword 参数过滤（如 keyword=\"4C8G\"、\"按量\"、\"包月\"）";
       } else if (hasMore) {
         message = `返回第 ${currentPage} 页 ${prices.length} 条，共 ${total} 条价格数据（还有更多）。下一步：传 page=${currentPage + 1} 翻页，或使用 keyword 参数过滤缩小范围`;
       } else {
@@ -824,7 +723,7 @@ server.registerTool(
             message: `获取价格失败: ${error instanceof Error ? error.message : String(error)}`,
             provider,
             productId,
-            suggestion: "请稍后重试，或传 quick=true 获取定价页面 URL",
+            suggestion: "请稍后重试",
           }, null, 2),
         }],
       };
