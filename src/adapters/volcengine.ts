@@ -174,17 +174,29 @@ export class VolcengineAdapter extends CloudDocAdapter {
     // pageId 格式: "productId/docId"
     const [productId, docId] = pageId.split("/");
 
-    const url = `${BASE_URL}/api/doc/getDocDetail?LibraryID=${productId}&DocumentID=${docId}&AuditDocumentID=&type=online`;
-    const raw = await this.fetchJson<GetDocDetailResponse>(url);
+    // 先访问文档页面获取 cookie（用于反爬虫验证）
+    const cookies = await this.fetchVolcengineDocCookies(productId, docId);
 
-    const doc = raw.Result;
+    // 使用 cookie 调用 API 获取文档元数据
+    const url = `${BASE_URL}/api/doc/getDocDetail?LibraryID=${productId}&DocumentID=${docId}&AuditDocumentID=&type=online`;
+    const res = await this.fetchWithRetry(url, {
+      headers: {
+        ...cookies,
+        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/148.0.0.0 Safari/537.36",
+        Accept: "application/json",
+        "x-language": "zh",
+        "x-use-bff-version": "1",
+        Referer: `${BASE_URL}/docs/${productId}/${docId}`,
+      },
+    });
+    const raw = await res.json() as GetDocDetailResponse;
 
     return {
       pageId,
-      title: doc.Title,
+      title: raw.Result?.Title || "",
       contentPath: pageId,
       bookId: productId,
-      updateDate: doc.UpdatedTime,
+      updateDate: raw.Result?.UpdatedTime,
     };
   }
 
@@ -192,12 +204,53 @@ export class VolcengineAdapter extends CloudDocAdapter {
     // contentPath 实际上是 pageId: "productId/docId"
     const [productId, docId] = contentPath.split("/");
 
+    // 先访问文档页面获取 cookie（用于反爬虫验证）
+    const cookies = await this.fetchVolcengineDocCookies(productId, docId);
+
+    // 使用 cookie 调用 API 获取文档内容
     const url = `${BASE_URL}/api/doc/getDocDetail?LibraryID=${productId}&DocumentID=${docId}&AuditDocumentID=&type=online`;
-    const raw = await this.fetchJson<GetDocDetailResponse>(url);
+    const res = await this.fetchWithRetry(url, {
+      headers: {
+        ...cookies,
+        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/148.0.0.0 Safari/537.36",
+        Accept: "application/json",
+        "x-language": "zh",
+        "x-use-bff-version": "1",
+        Referer: `${BASE_URL}/docs/${productId}/${docId}`,
+      },
+    });
+    const raw = await res.json() as GetDocDetailResponse;
 
     const doc = raw.Result;
-    // 返回 Markdown 内容
-    return doc.MDContent || doc.Content || "";
+    return doc?.MDContent || doc?.Content || "";
+  }
+
+  /**
+   * 先访问文档页面获取反爬虫验证 cookie，再调用 API
+   * 火山引擎的 API 需要 acw_tc + s_v_web_id 等 cookie 才能返回内容
+   */
+  private async fetchVolcengineDocCookies(productId: string, docId: string): Promise<Record<string, string>> {
+    const docUrl = `${BASE_URL}/docs/${productId}/${docId}`;
+    const res = await this.fetchWithRetry(docUrl, {
+      headers: {
+        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/148.0.0.0 Safari/537.36",
+        Accept: "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
+      },
+    });
+
+    // 提取 set-cookie 中的 cookie
+    const setCookie = res.headers.get("set-cookie") || "";
+    const cookieParts: string[] = [];
+    for (const part of setCookie.split(",")) {
+      const trimmed = part.split(";")[0].trim();
+      if (trimmed) cookieParts.push(trimmed);
+    }
+
+    const cookie = cookieParts.join("; ");
+
+    return {
+      Cookie: cookie,
+    };
   }
 
   /**
@@ -252,8 +305,9 @@ export class VolcengineAdapter extends CloudDocAdapter {
             const chargeItemCode = row.ChargeItemCode || "";
             const priceInfoList = row.PriceInfoList || [];
 
-            // 如果指定了 productId，只返回匹配产品的价格
-            if (productId && !productName.toLowerCase().includes(productId.toLowerCase())) {
+            // 如果指定了 productId，用解析后的 productCode 匹配，而不是用原始 productId
+            // 因为 productId(如 6396) 和实际产品的名称(如 ECS) 不匹配
+            if (productCode && !productName.toLowerCase().includes(productCode.toLowerCase())) {
               continue;
             }
 
@@ -265,8 +319,10 @@ export class VolcengineAdapter extends CloudDocAdapter {
               if (price <= 0) continue;
 
               // 从 ChargeItemCode 提取地域信息
-              const regionMatch = chargeItemCode.match(/_([a-z]{2}-[a-z]+-\d)$/);
-              const region = regionMatch ? regionMatch[1] : undefined;
+              // ChargeItemCode 格式: ecs.g3a_32xlarge_ap-southeast-1 或 ecs.g3a_32xlarge_cn-beijing
+              // 取最后一个 _ 后面的部分作为地域
+              const lastUnderscore = chargeItemCode.lastIndexOf("_");
+              const region = lastUnderscore > 0 ? chargeItemCode.substring(lastUnderscore + 1) : undefined;
 
               // 从 ConfigurationCode 提取可读规格
               const spec = this.parseConfigCode(configCode);
