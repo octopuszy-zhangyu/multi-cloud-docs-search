@@ -640,15 +640,8 @@ export class AliyunAdapter extends CloudDocAdapter {
         }
       }
 
-      // 如果仍然没有价格数据，添加明确的提示信息
-      if (prices.length === 0) {
-        prices.push({
-          productName: productId,
-          billingMode: "",
-          price: 0,
-          unit: "",
-        });
-      }
+      // 如果仍然没有价格数据，不添加空条目（避免质量检查报错）
+      // 价格查询失败时返回空 prices 数组即可
     }
 
     return this.makePriceResult(prices, { updateDate });

@@ -237,7 +237,7 @@ export class GlmAdapter extends CloudDocAdapter {
         }
 
         if (cells.length >= 2) {
-          const productName = cells[0] || "";
+          const productName = (cells[0] || "").replace(/<[^>]+>/g, "").trim();
           const priceStr = cells[cells.length - 1] || "0";
           const price = parseFloat(priceStr.replace(/[^0-9.]/g, ""));
           const spec = cells.length > 2 ? cells.slice(1, -1).join(" / ") : "";

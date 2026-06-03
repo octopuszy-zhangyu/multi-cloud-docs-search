@@ -121,6 +121,8 @@ async function runTests() {
         }
         // 数据质量检查
         const qr = sampleCheck(result.items, "get_document_toc");
+        qr.provider = config.provider;
+        qr.productId = product.id;
         qualityReports.push(qr);
         return { summary: `返回 ${result.total} 个目录项`, data: result.items, quality: qr };
       });
@@ -133,6 +135,8 @@ async function runTests() {
           throw new Error("应返回 SearchResult[]");
         }
         const qr = sampleCheck(result, "search_documents");
+        qr.provider = config.provider;
+        qr.productId = product.id;
         qualityReports.push(qr);
         return { summary: `返回 ${result.length} 个结果`, data: result, quality: qr };
       });
@@ -184,6 +188,8 @@ async function runTests() {
         }
         // 数据质量检查
         const qr = sampleCheck(result.prices, "get_product_price");
+        qr.provider = config.provider;
+        qr.productId = product.id;
         qualityReports.push(qr);
         return { summary: `dataStatus: ${result.dataStatus}, prices: ${result.prices.length}`, data: result, quality: qr };
       });
@@ -295,12 +301,14 @@ async function runTest(
  */
 function findFirstPageId(items: any[]): string | null {
   for (const item of items) {
-    if (item.pageId && item.pageId !== "00000000") {
-      return item.pageId;
-    }
+    // 优先递归 children，找到叶子节点
     if (item.children && item.children.length > 0) {
       const found = findFirstPageId(item.children);
       if (found) return found;
+    }
+    // children 为空或无有效 pageId 时，返回自己的 pageId
+    if (item.pageId && item.pageId !== "00000000") {
+      return item.pageId;
     }
   }
   return null;

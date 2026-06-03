@@ -161,6 +161,9 @@ export class CucloudAdapter extends CloudDocAdapter {
 
     let items = Array.from(tocMap.values());
 
+    // 过滤掉 pageId 为空的条目（class_id 是分类 ID，不是文档 ID）
+    items = items.filter((item) => item.pageId && item.pageId.trim().length > 0);
+
     // Keyword filtering
     items = this.filterByKeywords(items, options?.keyword);
 

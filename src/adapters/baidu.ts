@@ -82,109 +82,18 @@ export class BaiduAdapter extends CloudDocAdapter {
   }
 
   async searchDocuments(productId: string, keyword: string): Promise<SearchResult[]> {
-    try {
-      // 调用百度云官方搜索 API
-      // repoName 是产品 ID 的大写形式（如 BCC、BML）
-      // orgName 是文档系统标识，从 API 返回结果中动态获取，首次调用时使用默认值 "bce-doc"
-      const url = "https://cloud.baidu.com/api/doc/search";
-      const res = await this.fetchWithRetry(url, {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-          Accept: "application/json, text/plain, */*",
-          "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36",
-        },
-        body: JSON.stringify({
-          pageNo: 1,
-          pageSize: 10,
-          repoName: productId.toUpperCase(),
-          keyWord: keyword,
-          orgName: "bce-doc",
-        }),
-      });
-
-      if (!res.ok) return [];
-
-      const data = await res.json() as any;
-      if (!data.success) return [];
-
-      const results: SearchResult[] = [];
-      const items = data.page?.result || [];
-
-      for (const item of items) {
-        if (!item.documentName) continue;
-
-        // 解析 docUrl 获取 pageId
-        // docUrl 格式:
-        //   https://cloud.baidu.com/doc/BCC/s/SLUG
-        //   https://intl.cloud.baidu.com/zh/doc/BCC/s/SLUG
-        // 需要提取: BCC/s/SLUG
-        let pageId = "";
-        const urlMatch = item.docUrl?.match(/\/doc\/([A-Za-z0-9_-]+)\/s\/([^#]+)$/);
-        if (urlMatch) {
-          pageId = `${urlMatch[1]}/s/${urlMatch[2]}`; // 如 BCC/s/emnfh84xl
-        }
-
-        // 清理 HTML 标签（如 <em>）
-        const title = (item.documentName || "").replace(/<[^>]+>/g, "");
-        const description = (item.contentText || "").replace(/<[^>]+>/g, "");
-
-        if (pageId) {
-          results.push({
-            pageId,
-            title,
-            description: description.substring(0, 200), // 截断过长的描述
-          });
-        }
-      }
-
-      return results;
-    } catch {
-      // API 失败时 fallback 到本地目录匹配
-      return this.fallbackSearchDocuments(productId, keyword);
-    }
-  }
-
-  /**
-   * Fallback: 当搜索 API 失败时，使用本地目录匹配
-   */
-  private async fallbackSearchDocuments(productId: string, keyword: string): Promise<SearchResult[]> {
-    // 同义词映射
-    const synonyms: Record<string, string[]> = {
-      "价格": ["价格", "计费", "定价", "费用", "收费"],
-      "计费": ["价格", "计费", "定价", "费用", "收费"],
-      "定价": ["价格", "计费", "定价", "费用", "收费"],
-      "规格": ["规格", "配置", "实例", "型号", "类型"],
-      "配置": ["规格", "配置", "实例", "型号", "类型"],
-      "实例": ["实例", "主机", "服务器", "vm"],
-    };
-
+    // 百度云没有公开搜索 API，通过遍历文档目录做本地关键词匹配
     const tocResult = await this.getDocumentToc(productId);
     const toc = tocResult.items;
     const lowerKeyword = keyword.toLowerCase();
 
-    const directMatches = toc.filter((item) => item.title.toLowerCase().includes(lowerKeyword));
-
-    if (directMatches.length === 0) {
-      const synonymList = synonyms[keyword.toLowerCase()] || [];
-      for (const syn of synonymList) {
-        const lowerSyn = syn.toLowerCase();
-        const synMatches = toc.filter((item) => item.title.toLowerCase().includes(lowerSyn));
-        if (synMatches.length > 0) {
-          return synMatches.map((item) => ({
-            pageId: item.pageId,
-            title: item.title,
-            description: undefined,
-          }));
-        }
-      }
-    }
-
-    return directMatches.map((item) => ({
-      pageId: item.pageId,
-      title: item.title,
-      description: undefined,
-    }));
+    return toc
+      .filter((item) => item.title.toLowerCase().includes(lowerKeyword))
+      .map((item) => ({
+        pageId: item.pageId,
+        title: item.title,
+        description: undefined,
+      }));
   }
 
   async getPageMetadata(pageId: string): Promise<PageMetadata> {
@@ -237,10 +146,14 @@ export class BaiduAdapter extends CloudDocAdapter {
         }
 
         if (cells.length >= 2) {
-          const productName = cells[0] || "";
+          const productName = cells[0].trim();
+          // 跳过 productName 为空的行（如空行被解析为表格行）
+          if (!productName) {
+            continue;
+          }
+
           const priceStr = cells[cells.length - 1] || "0";
           const price = parseFloat(priceStr.replace(/[^0-9.]/g, ""));
-          const spec = cells.length > 2 ? cells.slice(1, -1).join(" / ") : "";
 
           if (!isNaN(price)) {
             prices.push({
