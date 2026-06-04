@@ -358,6 +358,22 @@ export abstract class CloudDocAdapter {
   protected inferSpecFromName(name: string): { cpu: number; mem: number } | null {
     const lower = name.toLowerCase();
 
+    // 华为云规格格式: {family}.{size}.{mem_ratio}.{os}
+    // 例如: at7.2xlarge.1.linux → 2xlarge 基准内存 8GB，mem_ratio=1，实际内存 8GB
+    // 例如: at7.2xlarge.2.linux → 2xlarge 基准内存 8GB，mem_ratio=2，实际内存 16GB
+    const huaweiMatch = lower.match(/^([a-z0-9]+)\.(xlarge|2xlarge|3xlarge|4xlarge|6xlarge|8xlarge|12xlarge|16xlarge|24xlarge|52xlarge|large|medium|small)\.(\d+)\./);
+    if (huaweiMatch) {
+      const size = huaweiMatch[2];
+      const memRatio = parseInt(huaweiMatch[3]);
+      const baseSpec = this.getBaseSpec(size);
+      if (baseSpec) {
+        return {
+          cpu: baseSpec.cpu,
+          mem: baseSpec.mem * memRatio,
+        };
+      }
+    }
+
     // 阿里云: ecs.c7.xlarge → xlarge=4C8G
     // 腾讯云: S5.LARGE8 → LARGE8=4C8G
     // 天翼云: e.xlarge.2 → xlarge=4C8G
@@ -369,6 +385,7 @@ export abstract class CloudDocAdapter {
       "xlarge.4": { cpu: 4, mem: 16 },
       "xlarge.8": { cpu: 4, mem: 32 },
       "xlarge": { cpu: 4, mem: 8 },  // 通用 xlarge = 4C8G
+      "52xlarge": { cpu: 104, mem: 384 },  // 52xlarge 必须放在 2xlarge 前面，避免误匹配
       "2xlarge": { cpu: 8, mem: 16 },
       "3xlarge": { cpu: 12, mem: 24 },
       "4xlarge": { cpu: 16, mem: 32 },
@@ -394,6 +411,29 @@ export abstract class CloudDocAdapter {
     }
 
     return null;
+  }
+
+  /**
+   * 获取规格的基准 CPU/内存配置
+   * 用于华为云内存倍率计算
+   */
+  private getBaseSpec(size: string): { cpu: number; mem: number } | null {
+    const baseSpecs: Record<string, { cpu: number; mem: number }> = {
+      "xlarge": { cpu: 4, mem: 8 },
+      "2xlarge": { cpu: 8, mem: 8 },   // 华为云 2xlarge 基准内存是 8GB，不是 16GB
+      "3xlarge": { cpu: 12, mem: 24 },
+      "4xlarge": { cpu: 16, mem: 32 },
+      "6xlarge": { cpu: 24, mem: 48 },
+      "8xlarge": { cpu: 32, mem: 64 },
+      "12xlarge": { cpu: 48, mem: 96 },
+      "16xlarge": { cpu: 64, mem: 128 },
+      "24xlarge": { cpu: 96, mem: 192 },
+      "52xlarge": { cpu: 104, mem: 384 },
+      "large": { cpu: 2, mem: 4 },
+      "medium": { cpu: 1, mem: 2 },
+      "small": { cpu: 1, mem: 1 },
+    };
+    return baseSpecs[size] || null;
   }
 
   /**
@@ -443,7 +483,7 @@ export abstract class CloudDocAdapter {
 
     // 先按 keyword 过滤（如果有）
     const filtered = keyword ? this.filterSpecPriceTable(table, keyword) : table;
-    if (filtered.length === 0) return table;
+    if (filtered.length === 0) return [];
 
     // 如果只有一个 region 或没有 region，直接返回过滤后的结果
     const regions = new Set(filtered.map(i => i.region || ""));
@@ -558,9 +598,12 @@ export abstract class CloudDocAdapter {
    * 根据价格数组判断数据状态
    */
   protected determineDataStatus(prices: PriceItem[]): "complete" | "partial" | "no_price" | "no_data" {
-    if (prices.length > 0 && prices[0].price > 0) return "complete";
-    if (prices.length > 0 && prices[0].price === 0) return "no_price";
-    return "no_data";
+    if (prices.length === 0) return "no_data";
+    const hasValid = prices.some(p => p.price > 0);
+    const hasInvalid = prices.some(p => p.price <= 0);
+    if (hasValid && hasInvalid) return "partial";
+    if (hasValid) return "complete";
+    return "no_price";
   }
 
   /**
@@ -568,11 +611,11 @@ export abstract class CloudDocAdapter {
    */
   protected makePriceResult(prices: PriceItem[], extra?: Partial<PriceResult>): PriceResult {
     return {
+      ...extra,
       provider: this.provider,
       name: this.name,
       prices,
       dataStatus: this.determineDataStatus(prices),
-      ...extra,
     };
   }
 

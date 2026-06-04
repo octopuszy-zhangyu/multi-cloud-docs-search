@@ -24,6 +24,14 @@ export class HuaweiAdapter extends CloudDocAdapter {
   readonly provider = "huawei";
   readonly name = "华为云";
 
+  // 中国大陆地域列表（用于过滤海外地域）
+  private readonly CN_REGIONS = new Set([
+    "cn-north-4", "cn-north-5", "cn-north-6", "cn-north-9", "cn-north-10", "cn-north-12",
+    "cn-east-2", "cn-east-3", "cn-east-4", "cn-east-5",
+    "cn-south-1", "cn-south-2", "cn-south-4",
+    "cn-southwest-2",
+  ]);
+
   private async fetchPortalApi<T>(url: string): Promise<T> {
     const res = await this.fetchWithRetry(url, {
       headers: {
@@ -69,7 +77,7 @@ export class HuaweiAdapter extends CloudDocAdapter {
     const items: TocItem[] = [];
     const seen = new Set<string>();
 
-    // 从侧边栏目录提取链接
+    // 从左侧边框目录提取链接
     // 格式: <a target="_self" href="https://support.huaweicloud.com/productdesc-ecs/ecs_01_0073.html" ...>
     $(".side-nav a[href]").each((_, el) => {
       const href = $(el).attr("href") || "";
@@ -146,7 +154,7 @@ export class HuaweiAdapter extends CloudDocAdapter {
   async getPageContent(contentPath: string): Promise<string> {
     const html = await this.fetchHtml(contentPath);
     const $ = cheerio.load(html);
-    // 只提取 help-content help-center-document 区域的内容，去除页头页脚等无关信息
+    // 仅提取 help-content help-center-document 区域的内容，去除页头页脚等无关信息
     const content = $(".help-content.help-center-document").first();
     if (content.length > 0) {
       return htmlToMarkdown(content.html() || "");
@@ -155,7 +163,7 @@ export class HuaweiAdapter extends CloudDocAdapter {
   }
 
   /**
-   * 从 Markdown 文本中解析价格表格（回退方案）
+   * 从 Markdown 文本中解析价格表格（退订方案）
    */
   private parsePriceTable(markdown: string): PriceItem[] {
     const lines = markdown.split("\n");
@@ -228,6 +236,9 @@ export class HuaweiAdapter extends CloudDocAdapter {
       if (!exportData) return specItems;
 
       for (const [region, items] of Object.entries(exportData)) {
+        // 只保留中国大陆地域
+        if (!this.CN_REGIONS.has(region)) continue;
+
         for (const item of items) {
           const specCode = item.resourceSpecCode || "";
           if (!specCode) continue;
@@ -293,7 +304,7 @@ export class HuaweiAdapter extends CloudDocAdapter {
   private parseHuaweiSpecCode(specCode: string): { family: string; cpu: number; mem: number } | null {
     const lower = specCode.toLowerCase();
 
-    // 格式1: x2.8u.8g.linux — 直接包含 u 和 g 标记
+    // 格式1: x2.8u.8g.linux → 直接包含 u 和 g 标记
     const match1 = lower.match(/^([a-z0-9]+)\.(\d+)u\.(\d+)g\./);
     if (match1) {
       return {
@@ -303,7 +314,7 @@ export class HuaweiAdapter extends CloudDocAdapter {
       };
     }
 
-    // 格式2: s6.large.1.linux — 通过规格名推断
+    // 格式2: s6.large.1.linux → 通过规格名推断
     const inferred = this.inferSpecFromName(lower);
     if (inferred) {
       const familyMatch = lower.match(/^([a-z0-9]+)\./);
@@ -322,13 +333,13 @@ export class HuaweiAdapter extends CloudDocAdapter {
    *
    * 实现方式：
    * 1. 调用 menuInfo API 获取所有产品的 urlPath
-   * 2. 对每个产品调用 export/productlist API 获取全量价格
+   * 2. 对每个产品调用 export/productlist API 获取全部价格
    * 3. 对 MaaS 等 Token 产品，用 productInfo API 获取详细价格
    *
-   * 华为云价格计算器 API（均可匿名调用）：
-   * - menuInfo: GET /api/calculator/.../menuInfo — 产品菜单
-   * - export/productlist: POST /api/calculator/.../export/productlist — 全量价格导出
-   * - productInfo: GET /api/calculator/.../productInfo — 产品配置和价格详情
+   * 华为云价格计算器 API（均可持续调用）：
+   * - menuInfo: GET /api/calculator/.../menuInfo → 产品菜单
+   * - export/productlist: POST /api/calculator/.../export/productlist → 全部价格导出
+   * - productInfo: GET /api/calculator/.../productInfo → 产品配置和价格详情
    */
   async getProductPrice(productId?: string, options?: PriceQueryOptions): Promise<PriceResult> {
     const name = this.name;
@@ -369,20 +380,20 @@ export class HuaweiAdapter extends CloudDocAdapter {
 
       for (const product of queryProducts) {
         try {
-          // 2. 调用 export/productlist 获取全量价格
+          // 2. 调用 export/productlist 获取全部价格
           const exportData = await this.exportProductList(product.urlPath);
           if (exportData) {
             const productPrices = this.parseExportPrices(exportData, product.name, product.urlPath);
             prices.push(...productPrices);
           }
 
-          // 3. 如果 export/productlist 没数据，尝试 productInfo API
+          // 3. 如果 export/productlist 没数据，就尝试 productInfo API
           if (!exportData || Object.values(exportData).every(arr => !Array.isArray(arr) || arr.length === 0)) {
             const infoPrices = await this.fetchProductInfoPrices(product.urlPath, product.name);
             prices.push(...infoPrices);
           }
 
-          // 4. 对 Token 类产品，补充 productInfo 详细价格
+          // 4. 对 Token 类别产品，补充 productInfo 详细价格
           if (product.urlPath === "maas") {
             const tokenPrices = await this.fetchMaasTokenPrices();
             prices.push(...tokenPrices);
@@ -392,10 +403,10 @@ export class HuaweiAdapter extends CloudDocAdapter {
         }
       }
     } catch (error) {
-      console.error("获取华为云价格信息失败:", error);
+      console.error("获取华为云价格信息失败", error);
     }
 
-    // 回退到文档解析
+    // 退订到文档解析
     if (prices.length === 0) {
       prices = await this.fallbackParsePrice(productId);
     }
@@ -411,7 +422,7 @@ export class HuaweiAdapter extends CloudDocAdapter {
       );
     }
 
-    // 分页（仅在明确指定 page/pageSize 时截断，否则返回全部数据）
+    // 分页（仅在明确指定 page/pageSize 时才截断，否则返回全部数据）
     const total = prices.length;
     const page = options?.page;
     const pageSize = options?.pageSize;
@@ -486,7 +497,7 @@ export class HuaweiAdapter extends CloudDocAdapter {
   };
 
   /**
-   * 调用 export/productlist API 获取全量价格
+   * 调用 export/productlist API 获取全部价格
    * 会尝试所有可用的 source 参数，直到获取到数据
    */
   private async exportProductList(urlPath: string): Promise<Record<string, any[]> | null> {
@@ -537,11 +548,14 @@ export class HuaweiAdapter extends CloudDocAdapter {
     const seen = new Set<string>();
 
     for (const [region, items] of Object.entries(data)) {
+      // 只保留中国大陆地域
+      if (!this.CN_REGIONS.has(region)) continue;
+
       for (const item of items) {
         const spec = item.resourceSpecCode || "";
         if (!spec) continue;
 
-        // 按需价格
+        // 按量价格
         if (item.ONDEMAND != null && item.ONDEMAND > 0) {
           const key = `${spec}_ondemand_${region}`;
           if (!seen.has(key)) {
@@ -676,7 +690,7 @@ export class HuaweiAdapter extends CloudDocAdapter {
             const isOutput = usageType.includes("output");
 
             prices.push({
-              productName: "MaaS 模型即服务",
+              productName: "MaaS 模型服务",
               billingMode: "按量",
               price: plan.amount,
               unit: "元/百万 Token",
@@ -692,7 +706,7 @@ export class HuaweiAdapter extends CloudDocAdapter {
   }
 
   /**
-   * 回退方案：从文档页面解析价格
+   * 退订方案：从文档页面解析价格
    */
   private async fallbackParsePrice(productId?: string): Promise<PriceItem[]> {
     const pricingBaseUrl = "https://www.huaweicloud.com/pricing";

@@ -428,6 +428,7 @@ export class EcloudAdapter extends CloudDocAdapter {
             cpu,
             mem,
             displayName,
+            region: "中国",
             billingMode: "按量",
             price,
             unit: "元/小时",
@@ -438,6 +439,7 @@ export class EcloudAdapter extends CloudDocAdapter {
             cpu,
             mem,
             displayName,
+            region: "中国",
             billingMode: "包月",
             price,
             unit: "元/月",
@@ -448,6 +450,7 @@ export class EcloudAdapter extends CloudDocAdapter {
             cpu,
             mem,
             displayName,
+            region: "中国",
             billingMode: "包年",
             price,
             unit: "元/年",
@@ -522,6 +525,7 @@ export class EcloudAdapter extends CloudDocAdapter {
           if (h.includes("按量")) {
             prices.push({
               productName: specName,
+              region: "中国",
               billingMode: "按量",
               price,
               unit: "元/小时",
@@ -529,6 +533,7 @@ export class EcloudAdapter extends CloudDocAdapter {
           } else if (h.includes("包月")) {
             prices.push({
               productName: specName,
+              region: "中国",
               billingMode: "包年包月",
               price,
               unit: "元/月",
@@ -536,6 +541,7 @@ export class EcloudAdapter extends CloudDocAdapter {
           } else if (h.includes("包年")) {
             prices.push({
               productName: specName,
+              region: "中国",
               billingMode: "包年包月",
               price,
               unit: "元/年",
@@ -604,7 +610,7 @@ export class EcloudAdapter extends CloudDocAdapter {
         const keywords = options.keyword.trim().split(/\s+/).filter(Boolean);
         if (keywords.length > 0) {
           filteredPrices = result.prices.filter(item => {
-            const text = (item.productName + " " + item.billingMode).toLowerCase();
+            const text = (item.productName + " " + item.region + " " + item.billingMode).toLowerCase();
             return keywords.every(kw => text.includes(kw.toLowerCase()));
           });
         }
