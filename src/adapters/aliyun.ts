@@ -1,5 +1,5 @@
 import * as cheerio from "cheerio";
-import { CloudDocAdapter, type Product, type TocItem, type SearchResult, type PageMetadata, type PriceItem, type PriceResult, type PaginatedResult, type ListProductsOptions, type TocOptions, type PriceQueryOptions } from "./base.js";
+import { CloudDocAdapter, type Product, type TocItem, type SearchResult, type PageMetadata, type PriceItem, type PriceResult, type SpecPriceItem, type PaginatedResult, type ListProductsOptions, type TocOptions, type PriceQueryOptions } from "./base.js";
 import { htmlToMarkdown } from "../utils/html-to-md.js";
 
 const BASE_URL = "https://help.aliyun.com";
@@ -524,6 +524,124 @@ export class AliyunAdapter extends CloudDocAdapter {
       default:
         return undefined;
     }
+  }
+
+  /**
+   * 构建阿里云 ECS 规格-配置-价格联合表
+   * 阿里云价格 API 直接返回 cpu/mem 字段，可精确映射
+   */
+  async buildSpecPriceTable(productId?: string): Promise<SpecPriceItem[]> {
+    if (!productId || productId.toLowerCase() !== "ecs") {
+      return super.buildSpecPriceTable(productId);
+    }
+
+    const specItems: SpecPriceItem[] = [];
+    const seen = new Set<string>();
+
+    try {
+      // 从价格 API 获取实例规格数据
+      const url = `${AliyunAdapter.PRICE_API_BASE}/queryPricingDetailList.json`;
+      const requestBody = {
+        saleProductCode: "ecs",
+        billItemCode: "instance_type",
+        priceDetailType: "general_discount_price",
+        limit: 500,
+        lang: "zh",
+        conditionFilterList: [],
+        regionList: ["cn-beijing"],
+        billModel: "",
+        priceType: "yearPrice",
+        nextToken: null,
+      };
+
+      const res = await this.fetchWithRetry(url, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          Accept: "application/json",
+        },
+        body: JSON.stringify(requestBody),
+      });
+
+      if (!res.ok) return specItems;
+
+      const response = await res.json() as { success?: boolean; data?: Record<string, unknown> };
+      if (!response.success || !response.data) return specItems;
+
+      const values = response.data.values as Array<Record<string, unknown>> | undefined;
+      if (!values) return specItems;
+
+      for (const value of values) {
+        const instanceType = value.instance_type as { name?: string; value?: string } | undefined;
+        const cpu = value.cpu as { name?: string } | undefined;
+        const mem = value.mem as { name?: string } | undefined;
+        const family = value.instance_type_family as { name?: string } | undefined;
+        const regionObj = (value["$priceDetailRegionCode$"] || value.region) as { name?: string; value?: string } | undefined;
+
+        const specName = instanceType?.name || family?.name || "";
+        const cpuCount = cpu?.name ? parseInt(cpu.name) : 0;
+        const memGB = mem?.name ? parseInt(mem.name) : 0;
+        const regionName = regionObj?.name || "华北2（北京）";
+        const familyName = family?.name;
+
+        if (!specName || cpuCount === 0 || memGB === 0) continue;
+
+        const displayName = `${cpuCount}C${memGB}G`;
+
+        // 提取按量价格
+        const postPay = value.postPay as { price?: string; priceUnit?: string } | undefined;
+        if (postPay?.price && postPay.price !== "NA") {
+          const price = parseFloat(postPay.price);
+          if (!isNaN(price) && price > 0) {
+            const key = `${specName}_${regionName}_按量`;
+            if (!seen.has(key)) {
+              seen.add(key);
+              specItems.push({
+                specName,
+                cpu: cpuCount,
+                mem: memGB,
+                displayName,
+                region: regionName,
+                billingMode: "按量",
+                price,
+                unit: "元/小时",
+                familyName,
+              });
+            }
+          }
+        }
+
+        // 提取包月价格
+        const prePay = value.prePay as Record<string, { price?: string; priceUnit?: string }> | undefined;
+        if (prePay) {
+          const monthPrice = prePay["1:Month"];
+          if (monthPrice?.price && monthPrice.price !== "NA") {
+            const price = parseFloat(monthPrice.price);
+            if (!isNaN(price) && price > 0) {
+              const key = `${specName}_${regionName}_包月`;
+              if (!seen.has(key)) {
+                seen.add(key);
+                specItems.push({
+                  specName,
+                  cpu: cpuCount,
+                  mem: memGB,
+                  displayName,
+                  region: regionName,
+                  billingMode: "包月",
+                  price,
+                  unit: "元/月",
+                  familyName,
+                });
+              }
+            }
+          }
+        }
+      }
+    } catch (err) {
+      console.error(`阿里云规格价格表构建失败: ${err instanceof Error ? err.message : String(err)}`);
+    }
+
+    return specItems;
   }
 
   async getProductPrice(productId?: string, _options?: PriceQueryOptions): Promise<PriceResult> {

@@ -1,5 +1,5 @@
 import * as cheerio from "cheerio";
-import { CloudDocAdapter, type Product, type TocItem, type SearchResult, type PageMetadata, type PriceItem, type PriceResult, type PaginatedResult, type ListProductsOptions, type TocOptions, type PriceQueryOptions } from "./base.js";
+import { CloudDocAdapter, type Product, type TocItem, type SearchResult, type PageMetadata, type PriceItem, type PriceResult, type SpecPriceItem, type PaginatedResult, type ListProductsOptions, type TocOptions, type PriceQueryOptions } from "./base.js";
 import { htmlToMarkdown } from "../utils/html-to-md.js";
 
 const BASE_URL = "https://ecloud.10086.cn";
@@ -286,6 +286,177 @@ export class EcloudAdapter extends CloudDocAdapter {
     }
 
     return htmlToMarkdown(contentHtml);
+  }
+
+  /**
+   * 构建移动云 ECS 规格-配置-价格联合表
+   * 移动云文档表格格式：
+   * | 主机类型 | 规格名称 | vCPU | 内存 | ... | 按量（元/小时） | 包月（元/月） | 包年（元/年） |
+   * 直接从表格中提取规格名、vCPU、内存和价格
+   */
+  async buildSpecPriceTable(productId?: string): Promise<SpecPriceItem[]> {
+    const specItems: SpecPriceItem[] = [];
+    const seen = new Set<string>();
+
+    if (!productId || productId !== "706") return specItems;
+
+    try {
+      // 获取产品的文档目录，查找价格相关页面
+      const tocResult = await this.getDocumentToc(productId);
+      const toc = tocResult.items;
+
+      // 查找包含"价格"、"计费"、"定价"或"云主机"的页面
+      const pricePages = toc.filter(item =>
+        item.title.includes("价格") ||
+        item.title.includes("计费") ||
+        item.title.includes("定价") ||
+        item.title.includes("价格总览") ||
+        item.title.includes("云主机")
+      );
+
+      const knownPricePages = pricePages.length > 0
+        ? pricePages
+        : [{ pageId: "41800", title: "通用型云主机" }];
+
+      const pagesToFetch = knownPricePages.slice(0, 5);
+
+      for (const page of pagesToFetch) {
+        try {
+          const meta = await this.getPageMetadata(page.pageId);
+          const content = await this.getPageContent(meta.contentPath);
+          const parsed = this.parseSpecTableWithPrice(content);
+          for (const item of parsed) {
+            const key = `${item.specName}_${item.billingMode}`;
+            if (!seen.has(key)) {
+              seen.add(key);
+              specItems.push(item);
+            }
+          }
+        } catch {
+          continue;
+        }
+      }
+    } catch (err) {
+      console.error(`移动云规格价格表构建失败: ${err instanceof Error ? err.message : String(err)}`);
+    }
+
+    return specItems;
+  }
+
+  /**
+   * 从 Markdown 文本中解析规格-配置-价格联合表
+   * 移动云价格表格格式：
+   * | 主机类型 | 规格名称 | vCPU | 内存 | ... | 按量（元/小时） | 包月（元/月） | 包年（元/年） |
+   */
+  private parseSpecTableWithPrice(markdown: string): SpecPriceItem[] {
+    const items: SpecPriceItem[] = [];
+    const lines = markdown.split("\n");
+    let inTable = false;
+    let headers: string[] = [];
+
+    for (let i = 0; i < lines.length; i++) {
+      const line = lines[i].trim();
+      if (!line.startsWith("|") || !line.endsWith("|")) {
+        inTable = false;
+        headers = [];
+        continue;
+      }
+
+      const cells = line.split("|").slice(1, -1).map(c => c.trim());
+      while (cells.length > 0 && cells[0] === "") cells.shift();
+      while (cells.length > 0 && cells[cells.length - 1] === "") cells.pop();
+
+      if (!inTable) {
+        inTable = true;
+        headers = cells;
+        continue;
+      }
+
+      if (cells.every(c => /^-+\s*$/.test(c))) continue;
+      if (cells.length < 2) continue;
+      if (/^\d+$/.test(cells[0]) && cells.length < 3) continue;
+
+      // 找到规格名列的索引
+      let specIdx = -1;
+      for (let j = 0; j < cells.length; j++) {
+        if (cells[j].includes(".") || /^[a-z]/i.test(cells[j])) {
+          specIdx = j;
+          break;
+        }
+      }
+      if (specIdx < 0) continue;
+
+      const specName = cells[specIdx];
+      const headerSpecIdx = headers.findIndex(h => h.includes("规格") || h.includes("实例规格"));
+      const offset = headerSpecIdx >= 0 ? specIdx - headerSpecIdx : 0;
+
+      // 提取 vCPU 和内存
+      let cpu = 0;
+      let mem = 0;
+      const cpuHeaderIdx = headers.findIndex(h => /vCPU|vCpu|cpu|核/.test(h));
+      const memHeaderIdx = headers.findIndex(h => /内存|mem|memory/.test(h));
+
+      if (cpuHeaderIdx >= 0) {
+        const cpuIdx = cpuHeaderIdx + offset;
+        if (cpuIdx >= 0 && cpuIdx < cells.length) {
+          cpu = parseInt(cells[cpuIdx]) || 0;
+        }
+      }
+      if (memHeaderIdx >= 0) {
+        const memIdx = memHeaderIdx + offset;
+        if (memIdx >= 0 && memIdx < cells.length) {
+          mem = parseInt(cells[memIdx]) || 0;
+        }
+      }
+
+      if (cpu === 0 || mem === 0) continue;
+      const displayName = `${cpu}C${mem}G`;
+
+      // 提取价格
+      for (let j = 0; j < headers.length; j++) {
+        const cellIdx = j + offset;
+        if (cellIdx < 0 || cellIdx >= cells.length) continue;
+
+        const val = cells[cellIdx].replace(/,/g, "");
+        const price = parseFloat(val);
+        if (isNaN(price) || price <= 0) continue;
+
+        const h = headers[j];
+        if (h.includes("按量")) {
+          items.push({
+            specName,
+            cpu,
+            mem,
+            displayName,
+            billingMode: "按量",
+            price,
+            unit: "元/小时",
+          });
+        } else if (h.includes("包月")) {
+          items.push({
+            specName,
+            cpu,
+            mem,
+            displayName,
+            billingMode: "包月",
+            price,
+            unit: "元/月",
+          });
+        } else if (h.includes("包年")) {
+          items.push({
+            specName,
+            cpu,
+            mem,
+            displayName,
+            billingMode: "包年",
+            price,
+            unit: "元/年",
+          });
+        }
+      }
+    }
+
+    return items;
   }
 
   /**

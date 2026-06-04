@@ -1,5 +1,5 @@
 import * as cheerio from "cheerio";
-import { CloudDocAdapter, type Product, type TocItem, type SearchResult, type PageMetadata, type PriceItem, type PriceResult, type PaginatedResult, type ListProductsOptions, type TocOptions, type PriceQueryOptions } from "./base.js";
+import { CloudDocAdapter, type Product, type TocItem, type SearchResult, type PageMetadata, type PriceItem, type PriceResult, type SpecPriceItem, type PaginatedResult, type ListProductsOptions, type TocOptions, type PriceQueryOptions } from "./base.js";
 import { htmlToMarkdown } from "../utils/html-to-md.js";
 
 const BASE_URL = "https://support.huaweicloud.com";
@@ -201,6 +201,120 @@ export class HuaweiAdapter extends CloudDocAdapter {
     }
 
     return prices;
+  }
+
+  /**
+   * 构建华为云 ECS 规格-配置-价格联合表
+   *
+   * resourceSpecCode 格式: x2.8u.8g.linux
+   *   - x2 = 规格族
+   *   - 8u = 8 vCPU
+   *   - 8g = 8GB 内存
+   *   - linux = 操作系统
+   *
+   * 其他格式: s6.large.1.linux
+   *   - s6 = 规格族
+   *   - large.1 = 规格大小
+   *   - linux = 操作系统
+   */
+  async buildSpecPriceTable(productId?: string): Promise<SpecPriceItem[]> {
+    const specItems: SpecPriceItem[] = [];
+    const seen = new Set<string>();
+
+    if (!productId || productId !== "ecs") return specItems;
+
+    try {
+      const exportData = await this.exportProductList("ecs");
+      if (!exportData) return specItems;
+
+      for (const [region, items] of Object.entries(exportData)) {
+        for (const item of items) {
+          const specCode = item.resourceSpecCode || "";
+          if (!specCode) continue;
+
+          // 解析 resourceSpecCode 获取 CPU 和内存
+          const parsed = this.parseHuaweiSpecCode(specCode);
+          if (!parsed) continue;
+
+          const displayName = `${parsed.cpu}C${parsed.mem}G`;
+
+          // 按量价格
+          if (item.ONDEMAND != null && item.ONDEMAND > 0) {
+            const key = `${specCode}_${region}_按量`;
+            if (!seen.has(key)) {
+              seen.add(key);
+              specItems.push({
+                specName: specCode,
+                cpu: parsed.cpu,
+                mem: parsed.mem,
+                displayName,
+                region,
+                billingMode: "按量",
+                price: item.ONDEMAND,
+                unit: "元/小时",
+                familyName: parsed.family,
+              });
+            }
+          }
+
+          // 包月价格
+          if (item.MONTHLY_1 != null && item.MONTHLY_1 > 0) {
+            const key = `${specCode}_${region}_包月`;
+            if (!seen.has(key)) {
+              seen.add(key);
+              specItems.push({
+                specName: specCode,
+                cpu: parsed.cpu,
+                mem: parsed.mem,
+                displayName,
+                region,
+                billingMode: "包月",
+                price: item.MONTHLY_1,
+                unit: "元/月",
+                familyName: parsed.family,
+              });
+            }
+          }
+        }
+      }
+    } catch (err) {
+      console.error(`华为云规格价格表构建失败: ${err instanceof Error ? err.message : String(err)}`);
+    }
+
+    return specItems;
+  }
+
+  /**
+   * 解析华为云 resourceSpecCode
+   *
+   * 格式1: x2.8u.8g.linux → { family: "x2", cpu: 8, mem: 8 }
+   * 格式2: s6.large.1.linux → 通过 inferSpecFromName 推断
+   */
+  private parseHuaweiSpecCode(specCode: string): { family: string; cpu: number; mem: number } | null {
+    const lower = specCode.toLowerCase();
+
+    // 格式1: x2.8u.8g.linux — 直接包含 u 和 g 标记
+    const match1 = lower.match(/^([a-z0-9]+)\.(\d+)u\.(\d+)g\./);
+    if (match1) {
+      return {
+        family: match1[1],
+        cpu: parseInt(match1[2]),
+        mem: parseInt(match1[3]),
+      };
+    }
+
+    // 格式2: s6.large.1.linux — 通过规格名推断
+    const inferred = this.inferSpecFromName(lower);
+    if (inferred) {
+      const familyMatch = lower.match(/^([a-z0-9]+)\./);
+      return {
+        family: familyMatch ? familyMatch[1] : "",
+        cpu: inferred.cpu,
+        mem: inferred.mem,
+      };
+    }
+
+    return null;
   }
 
   /**

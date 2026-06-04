@@ -1,5 +1,5 @@
 import * as cheerio from "cheerio";
-import { CloudDocAdapter, type Product, type TocItem, type SearchResult, type PageMetadata, type PriceItem, type PriceResult, type PaginatedResult, type ListProductsOptions, type TocOptions, type PriceQueryOptions } from "./base.js";
+import { CloudDocAdapter, type Product, type TocItem, type SearchResult, type PageMetadata, type PriceItem, type PriceResult, type SpecPriceItem, type PaginatedResult, type ListProductsOptions, type TocOptions, type PriceQueryOptions } from "./base.js";
 import { htmlToMarkdown } from "../utils/html-to-md.js";
 
 const BASE_URL = "https://cloud.tencent.com";
@@ -235,6 +235,96 @@ export class TencentAdapter extends CloudDocAdapter {
    * - POST https://workbench.cloud.tencent.com/cgi/api
    *   支持 CVM、VPC 等产品的 API 调用
    */
+  /**
+   * 构建腾讯云 CVM 规格-配置-价格联合表
+   * 从 DescribeZoneInstanceConfigInfos API 中提取 CPU/Memory 信息
+   */
+  async buildSpecPriceTable(productId?: string): Promise<SpecPriceItem[]> {
+    const specItems: SpecPriceItem[] = [];
+    const seen = new Set<string>();
+
+    const isCvm = !productId ||
+      productId === "cvm" ||
+      productId === "213" ||
+      productId.toLowerCase().includes("cvm") ||
+      productId.toLowerCase().includes("云服务器") ||
+      productId.toLowerCase().includes("ecs");
+
+    if (!isCvm) return super.buildSpecPriceTable(productId);
+
+    const regionPromises = this.CVM_REGIONS.map(async (region) => {
+      try {
+        const result = await this.callWorkbenchApi(
+          "cvm/DescribeZoneInstanceConfigInfos",
+          region,
+          {
+            Filters: [
+              { Name: "instance-charge-type", Values: ["PREPAID", "POSTPAID_BY_HOUR"] },
+            ],
+            Platform: "LINUX",
+            Version: "2017-03-12",
+          }
+        );
+
+        if (!result?.data?.Response?.InstanceTypeQuotaSet) return;
+
+        for (const config of result.data.Response.InstanceTypeQuotaSet) {
+          const instanceType = config.InstanceType || "";
+          const cpu = config.Cpu || 0;
+          const memory = config.Memory || 0; // GB
+          const zone = config.Zone || "";
+          const instanceChargeType = config.InstanceChargeType || "";
+          const price = config.Price || {};
+
+          if (!instanceType || cpu === 0 || memory === 0) continue;
+
+          const displayName = `${cpu}C${memory}G`;
+
+          if (instanceChargeType === "PREPAID") {
+            if (price.OriginalPrice > 0) {
+              const key = `${instanceType}_${zone}_包月`;
+              if (!seen.has(key)) {
+                seen.add(key);
+                specItems.push({
+                  specName: instanceType,
+                  cpu,
+                  mem: memory,
+                  displayName,
+                  region: zone,
+                  billingMode: "包月",
+                  price: price.OriginalPrice,
+                  unit: "元/月",
+                });
+              }
+            }
+          } else if (instanceChargeType === "POSTPAID_BY_HOUR") {
+            if (price.UnitPrice > 0) {
+              const key = `${instanceType}_${zone}_按量`;
+              if (!seen.has(key)) {
+                seen.add(key);
+                specItems.push({
+                  specName: instanceType,
+                  cpu,
+                  mem: memory,
+                  displayName,
+                  region: zone,
+                  billingMode: "按量",
+                  price: price.UnitPrice,
+                  unit: "元/小时",
+                });
+              }
+            }
+          }
+        }
+      } catch {
+        // 单个地域失败不影响其他地域
+      }
+    });
+
+    await Promise.all(regionPromises);
+    return specItems;
+  }
+
   async getProductPrice(productId?: string): Promise<PriceResult> {
     const name = this.name;
     let prices: PriceItem[] = [];

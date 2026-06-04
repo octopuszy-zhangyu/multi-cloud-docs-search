@@ -2,7 +2,7 @@ import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
 import { z } from "zod";
 import { getAdapter } from "./adapters/index.js";
-import type { Product } from "./adapters/base.js";
+import type { Product, SpecPriceItem } from "./adapters/base.js";
 
 /** 关键词过滤函数（AND 逻辑，多个空格分隔的关键词必须全部匹配，支持别名扩展） */
 function filterByKeywords<T extends { name?: string; title?: string }>(
@@ -512,6 +512,52 @@ server.registerTool(
   async ({ provider, productId, page, pageSize, keyword }: { provider: string; productId?: string; page?: number; pageSize?: number; keyword?: string }) => {
     try {
       const adapter = getAdapter(provider);
+
+      // 检测 keyword 是否为规格配置描述（如 "4C8G"、"4核8G"）
+      const specPattern = /^\s*(\d+)\s*[cC核]\s*(\d+)\s*[gG]\s*$/;
+      const specMatch = keyword ? keyword.match(specPattern) : null;
+
+      if (specMatch) {
+        // 使用规格-配置-价格联合表进行精确过滤
+        const specTable = await adapter.buildSpecPriceTable(productId);
+        // 自动选取规格最全的一个 region，减少数据冗余
+        const bestRegionTable = adapter.pickBestRegion(specTable, keyword);
+        const filtered = bestRegionTable;
+
+        if (filtered.length > 0) {
+          // 按 displayName 分组，方便用户查看
+          const grouped: Record<string, SpecPriceItem[]> = {};
+          for (const item of filtered) {
+            if (!grouped[item.displayName]) grouped[item.displayName] = [];
+            grouped[item.displayName].push(item);
+          }
+
+          // 标记选中的 region
+          const selectedRegion = filtered[0]?.region || "";
+
+          return {
+            content: [{
+              type: "text",
+              text: JSON.stringify({
+                provider,
+                name: adapter.name,
+                keyword,
+                specTable: true,
+                selectedRegion,
+                total: filtered.length,
+                specs: Object.entries(grouped).map(([displayName, items]) => ({
+                  displayName,
+                  count: items.length,
+                  items: items.slice(0, 20), // 每个配置最多展示 20 条
+                  totalItems: items.length,
+                })),
+                message: `找到 ${filtered.length} 条匹配 "${keyword}" 的规格价格记录（自动选取规格最全的地域: ${selectedRegion}）`,
+              }, null, 2),
+            }],
+          };
+        }
+      }
+
       const result = await adapter.getProductPrice(productId, { page, pageSize, keyword });
 
       // 应用分页和过滤（如果适配器未处理）

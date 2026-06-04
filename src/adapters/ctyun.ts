@@ -4,7 +4,7 @@ import type {
   ContentQueryResponse,
   PageMetadataResponse,
 } from "../types.js";
-import { CloudDocAdapter, type Product, type TocItem, type SearchResult, type PageMetadata, type PriceItem, type PriceResult, type PaginatedResult, type ListProductsOptions, type TocOptions, type PriceQueryOptions } from "./base.js";
+import { CloudDocAdapter, type Product, type TocItem, type SearchResult, type PageMetadata, type PriceItem, type PriceResult, type SpecPriceItem, type PaginatedResult, type ListProductsOptions, type TocOptions, type PriceQueryOptions } from "./base.js";
 import { htmlToMarkdown } from "../utils/html-to-md.js";
 
 const BASE_URL = "https://www.ctyun.cn";
@@ -445,6 +445,104 @@ export class CtyunAdapter extends CloudDocAdapter {
    *
    * options.keyword 支持地域过滤，当包含地域名称时只返回该地域价格。
    */
+  /**
+   * 构建天翼云 ECS 规格-配置-价格联合表
+   * 天翼云 flavor API 直接返回 cpu/mem 信息
+   */
+  async buildSpecPriceTable(productId?: string): Promise<SpecPriceItem[]> {
+    const specItems: SpecPriceItem[] = [];
+    const seen = new Set<string>();
+
+    if (!productId || productId !== "10026730") return specItems;
+
+    try {
+      const cookie = await this.getCtyunCookie();
+      const regions = await this.getRegionList();
+      const targetRegion = this.findRegionByKeyword(regions, "华东1") || regions[0];
+      if (!targetRegion) return specItems;
+
+      const flavorMap = await this.getFlavorMap(targetRegion.id);
+      if (flavorMap.size === 0) return specItems;
+
+      const flavorsInfo: Array<{
+        spec_name: string; cpu: number; mem: number; flavor_uuid: string; flavorType: string; cpuinfo: string;
+      }> = [];
+      for (const [_, info] of flavorMap) {
+        flavorsInfo.push(info);
+      }
+
+      // 并行查询包月和按量价格
+      const [monthlyRes, hourlyRes] = await Promise.all([
+        this.fetchWithRetry("https://console.ctyun.cn/console/compute/api/proxyv3/querynew/", {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+            "Referer": `${BASE_URL}/`,
+            "Accept": "application/json",
+            "Cookie": `ct_tgc=${cookie}`,
+          },
+          body: JSON.stringify({
+            billMode: 1, regionId: targetRegion.id, resourceType: "ecs_flavor",
+            flavorsInfo, cycleCnt: 1, cycleType: "M",
+          }),
+        }),
+        this.fetchWithRetry("https://console.ctyun.cn/console/compute/api/proxyv3/querynew/", {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+            "Referer": `${BASE_URL}/`,
+            "Accept": "application/json",
+            "Cookie": `ct_tgc=${cookie}`,
+          },
+          body: JSON.stringify({
+            billMode: 2, regionId: targetRegion.id, resourceType: "ecs_flavor",
+            flavorsInfo, cycleCnt: 1, cycleType: "H",
+          }),
+        }),
+      ]);
+
+      const [monthlyRaw, hourlyRaw] = await Promise.all([
+        monthlyRes.json() as Promise<any>,
+        hourlyRes.json() as Promise<any>,
+      ]);
+
+      const parsePrices = (raw: any, billingMode: string, unit: string) => {
+        const returnObj = raw?.returnObj;
+        if (!returnObj || raw.statusCode !== 800) return;
+        for (const sub of returnObj.subOrderPrices || []) {
+          const flavorInfo = flavorMap.get(sub.flavor_uuid);
+          if (!flavorInfo) continue;
+          const vmPrice = (sub.orderItemPrices || []).find((p: any) => p.resourceType === "VM");
+          const price = vmPrice ? vmPrice.finalPrice : sub.finalPrice;
+          if (price <= 0) continue;
+
+          const displayName = `${flavorInfo.cpu}C${flavorInfo.mem}G`;
+          const key = `${flavorInfo.spec_name}_${billingMode}`;
+          if (!seen.has(key)) {
+            seen.add(key);
+            specItems.push({
+              specName: flavorInfo.spec_name,
+              cpu: flavorInfo.cpu,
+              mem: flavorInfo.mem,
+              displayName,
+              region: targetRegion.name,
+              billingMode,
+              price,
+              unit,
+            });
+          }
+        }
+      };
+
+      parsePrices(monthlyRaw, "包月", "元/月");
+      parsePrices(hourlyRaw, "按量", "元/小时");
+    } catch (err) {
+      console.error(`天翼云规格价格表构建失败: ${err instanceof Error ? err.message : String(err)}`);
+    }
+
+    return specItems;
+  }
+
   async getProductPrice(productId?: string, options?: PriceQueryOptions): Promise<PriceResult> {
     const result: PriceResult = {
       provider: this.provider,

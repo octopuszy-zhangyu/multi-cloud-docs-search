@@ -1,4 +1,4 @@
-import { CloudDocAdapter, type Product, type TocItem, type SearchResult, type PageMetadata, type PriceItem, type PriceResult, type PaginatedResult, type ListProductsOptions, type TocOptions, type PriceQueryOptions } from "./base.js";
+import { CloudDocAdapter, type Product, type TocItem, type SearchResult, type PageMetadata, type PriceItem, type PriceResult, type SpecPriceItem, type PaginatedResult, type ListProductsOptions, type TocOptions, type PriceQueryOptions } from "./base.js";
 
 const BASE_URL = "https://www.volcengine.com";
 
@@ -265,6 +265,228 @@ export class VolcengineAdapter extends CloudDocAdapter {
    * - GetTable: POST /anonymous-api/trade/price?Action=GetTable&Version=2020-01-01
    *   返回完整定价表格，每行包含 Product、ConfigurationCode、ChargeItemCode、PriceInfoList
    */
+  /** 规格配置映射缓存（从文档提取） */
+  private specConfigCache: Map<string, { cpu: number; mem: number }> | null = null;
+  private specConfigExpiry: number = 0;
+
+  /**
+   * 从官方文档提取规格配置映射
+   * 火山引擎规格文档中包含实例规格和 vCPU/内存的对应表格
+   */
+  private async getSpecConfigMap(): Promise<Map<string, { cpu: number; mem: number }>> {
+    // 缓存 1 小时
+    if (this.specConfigCache && Date.now() < this.specConfigExpiry) {
+      return this.specConfigCache;
+    }
+
+    const specMap = new Map<string, { cpu: number; mem: number }>();
+
+    // 需要抓取的规格文档页面
+    const specDocIds = [
+      "6396/1895261",  // 通用型(新)
+      "6396/1913966",  // 计算型(新)
+      "6396/68528",    // 计算型
+      "6396/68527",    // 通用型
+      "6396/1134015",  // 计算型弹性裸金属
+      "6396/69763",    // 通用型弹性裸金属
+    ];
+
+    for (const pageId of specDocIds) {
+      try {
+        const meta = await this.getPageMetadata(pageId);
+        const content = await this.getPageContent(meta.contentPath);
+        if (!content) continue;
+
+        const lines = content.split("\n");
+        let inTable = false;
+        let headers: string[] = [];
+        let cpuCol = -1, memCol = -1, specCol = -1;
+
+        for (const line of lines) {
+          const trimmed = line.trim();
+          if (!trimmed.startsWith("|")) { inTable = false; continue; }
+
+          const cells = trimmed.split("|").slice(1, -1).map(c => c.trim().replace(/<[^>]+>/g, ""));
+
+          if (!inTable) {
+            inTable = true;
+            headers = cells;
+            cpuCol = headers.findIndex(h => /vCPU|cpu/.test(h));
+            memCol = headers.findIndex(h => /内存|memory|mem/i.test(h));
+            specCol = headers.findIndex(h => /实例规格|规格名称/.test(h));
+            continue;
+          }
+
+          if (cells.every(c => /^-+$/.test(c.trim()))) continue;
+          if (specCol < 0 || cpuCol < 0 || memCol < 0) continue;
+          if (cells.length <= Math.max(specCol, cpuCol, memCol)) continue;
+
+          const specName = cells[specCol].trim().replace(/\\/g, "");
+          const cpu = parseInt(cells[cpuCol]);
+          const mem = parseInt(cells[memCol]);
+
+          if (specName && !isNaN(cpu) && !isNaN(mem) && cpu > 0 && mem > 0) {
+            // 标准化规格名：去掉 -lm 等内部后缀
+            // ecs.g2i-lm.xlarge → g2i.xlarge
+            let normalized = specName.replace(/^ecs\./, "");
+            normalized = normalized.replace(/-lm\./, ".");
+            if (!specMap.has(normalized)) {
+              specMap.set(normalized, { cpu, mem });
+            }
+          }
+        }
+      } catch {
+        continue;
+      }
+    }
+
+    this.specConfigCache = specMap;
+    this.specConfigExpiry = Date.now() + 60 * 60 * 1000;
+    return specMap;
+  }
+
+  /**
+   * 从文档获取的规格配置映射中查找规格的 CPU/内存
+   * 支持精确匹配和前缀匹配
+   */
+  private lookupSpecConfig(specName: string): { cpu: number; mem: number } | null {
+    if (!this.specConfigCache) return null;
+
+    // 1. 精确匹配
+    if (this.specConfigCache.has(specName)) {
+      return this.specConfigCache.get(specName)!;
+    }
+
+    // 2. 尝试带 ecs. 前缀
+    if (this.specConfigCache.has(`ecs.${specName}`)) {
+      return this.specConfigCache.get(`ecs.${specName}`)!;
+    }
+
+    // 3. 模糊匹配：找同规格族同大小的规格
+    // g3i.xlarge → 在文档中找 *.xlarge 且规格族前缀匹配
+    const parts = specName.split(".");
+    if (parts.length === 2) {
+      const familyBase = parts[0]; // g3i
+      const size = parts[1];       // xlarge
+      for (const [docSpec, config] of this.specConfigCache) {
+        const docParts = docSpec.split(".");
+        if (docParts.length === 2 && docParts[1] === size) {
+          // 规格族前缀相似
+          if (docParts[0].startsWith(familyBase) || familyBase.startsWith(docParts[0])) {
+            return config;
+          }
+        }
+      }
+    }
+
+    return null;
+  }
+
+  /**
+   * 构建火山引擎 ECS 规格-配置-价格联合表
+   * 从 GetTable API 获取价格，从文档提取的规格配置映射中获取 CPU/内存
+   */
+  async buildSpecPriceTable(productId?: string): Promise<SpecPriceItem[]> {
+    const specItems: SpecPriceItem[] = [];
+    const seen = new Set<string>();
+
+    try {
+      // 先获取价格数据（GetTable API），再获取规格配置映射（文档）
+      // 顺序重要：先调 API 再调 getPageContent，避免状态干扰
+      const productCodes = this.resolveProductCodes(productId);
+      const allRows: Array<{ productName: string; configCode: string; chargeItemCode: string; priceInfoList: any[] }> = [];
+
+      for (const productCode of productCodes) {
+        const templateCode = await this.getTemplateCode(productCode);
+        if (!templateCode) continue;
+
+        const tableRes = await this.fetchWithRetry(
+          `${BASE_URL}/anonymous-api/trade/price?Action=GetTable&Version=2020-01-01`,
+          {
+            method: "POST",
+            headers: {
+              "Content-Type": "application/json",
+              "Accept": "application/json",
+              "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36",
+            },
+            body: JSON.stringify({ TemplateCode: templateCode }),
+          }
+        );
+
+        if (!tableRes.ok) continue;
+
+        const tableData = await tableRes.json() as any;
+        const tableList = tableData?.Result?.TableList || [];
+
+        for (const table of tableList) {
+          const rows = table.Rows || [];
+          for (const row of rows) {
+            const productName = row.Product || "";
+            if (productCode && !productName.toLowerCase().includes(productCode.toLowerCase())) continue;
+            allRows.push({
+              productName,
+              configCode: row.ConfigurationCode || "",
+              chargeItemCode: row.ChargeItemCode || "",
+              priceInfoList: row.PriceInfoList || [],
+            });
+          }
+        }
+      }
+
+      if (allRows.length === 0) return specItems;
+
+      // 再从文档加载规格配置映射
+      const specConfigMap = await this.getSpecConfigMap();
+
+      // JOIN：将价格数据和规格配置映射合并
+      for (const row of allRows) {
+        const spec = this.parseConfigCode(row.configCode);
+        if (!spec) continue;
+
+        // 优先从文档映射查找，找不到则用 inferSpecFromName 推断
+        let config = specConfigMap.size > 0 ? this.lookupSpecConfig(spec) : null;
+        if (!config) {
+          const inferred = this.inferSpecFromName(spec);
+          if (!inferred) continue;
+          config = inferred;
+        }
+
+        const displayName = `${config.cpu}C${config.mem}G`;
+
+        const lastUnderscore = row.chargeItemCode.lastIndexOf("_");
+        const region = lastUnderscore > 0 ? row.chargeItemCode.substring(lastUnderscore + 1) : undefined;
+
+        for (const pi of row.priceInfoList) {
+          const period = pi.Period || "";
+          const price = parseFloat(pi.Price) || 0;
+          const times = pi.Times || 1;
+
+          if (price <= 0) continue;
+
+          const { unit, billingMode } = this.parsePeriod(period, times);
+          const key = `${spec}_${region || ""}_${billingMode}`;
+          if (!seen.has(key)) {
+            seen.add(key);
+            specItems.push({
+              specName: spec,
+              cpu: config.cpu,
+              mem: config.mem,
+              displayName,
+              region,
+              billingMode,
+              price,
+              unit,
+            });
+          }
+        }
+      }
+    } catch (err) {
+      console.error(`火山引擎规格价格表构建失败: ${err instanceof Error ? err.message : String(err)}`);
+    }
+
+    return specItems;
+  }
+
   async getProductPrice(productId?: string, _options?: PriceQueryOptions): Promise<PriceResult> {
     let prices: PriceItem[] = [];
 
@@ -438,7 +660,12 @@ export class VolcengineAdapter extends CloudDocAdapter {
     const activeProductInfo = ssrData?.activeProductInfo;
 
     if (typeof activeProductInfo === "object") {
-      return activeProductInfo?.TemplateInfoList?.[0]?.TemplateCode || null;
+      const templates = activeProductInfo?.TemplateInfoList || [];
+      // 优先选 Type=1 且有 TableCodeList 的模板
+      const withTables = templates.find((t: any) => t.Type === 1 && t.TableCodeList?.length > 0);
+      if (withTables) return withTables.TemplateCode;
+      // 回退到第一个
+      return templates[0]?.TemplateCode || null;
     }
 
     return null;
