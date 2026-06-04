@@ -207,20 +207,16 @@ export class DeepseekAdapter extends CloudDocAdapter {
           continue;
         }
 
-        // Parse key-value style table rows
-        // Format: PRICING | 1M INPUT TOKENS (CACHE HIT) | $0.0028 | $0.003625
-        // Format: 1M INPUT TOKENS (CACHE MISS) | $0.14 | $0.435
-        // Format: 1M OUTPUT TOKENS | $0.28 | $0.87
-        if (cells.length >= 4) {
+        // DeepSeek pricing table format (3 or 4 columns):
+        // | PRICING | 1M INPUT TOKENS (CACHE HIT) | $0.0028 | $0.003625 |  (4 cols - header row)
+        // | 1M INPUT TOKENS (CACHE MISS) | $0.14 | $0.435 |              (3 cols - data row)
+        // | 1M OUTPUT TOKENS | $0.28 | $0.87 |                           (3 cols - data row)
+        if (cells.length >= 3) {
           const key = cells[0].toLowerCase();
 
           if (key === "pricing" && cells.length >= 4) {
             // PRICING row: PRICING | 1M INPUT TOKENS (CACHE HIT) | $0.0028 | $0.003625
-            // Skip - the actual data is in subsequent rows
-            continue;
-          }
-
-          if (key === "1m input tokens (cache hit)" && cells.length >= 4) {
+            // This row actually contains the cache hit prices
             const flashPrice = parseFloat(cells[2].replace(/[^0-9.]/g, ""));
             const proPrice = parseFloat(cells[3].replace(/[^0-9.]/g, ""));
             if (!isNaN(flashPrice) && flashPrice > 0) {
@@ -229,18 +225,30 @@ export class DeepseekAdapter extends CloudDocAdapter {
             if (!isNaN(proPrice) && proPrice > 0) {
               prices.push({ productName: "deepseek-v4-pro 输入(缓存命中)", billingMode: "按量", price: proPrice, unit: "元/百万Token" });
             }
-          } else if (key === "1m input tokens (cache miss)" && cells.length >= 4) {
-            const flashPrice = parseFloat(cells[2].replace(/[^0-9.]/g, ""));
-            const proPrice = parseFloat(cells[3].replace(/[^0-9.]/g, ""));
+            continue;
+          }
+
+          if (key === "1m input tokens (cache hit)" && cells.length >= 3) {
+            const flashPrice = parseFloat(cells[1].replace(/[^0-9.]/g, ""));
+            const proPrice = cells.length >= 3 ? parseFloat(cells[2].replace(/[^0-9.]/g, "")) : 0;
+            if (!isNaN(flashPrice) && flashPrice > 0) {
+              prices.push({ productName: "deepseek-v4-flash 输入(缓存命中)", billingMode: "按量", price: flashPrice, unit: "元/百万Token" });
+            }
+            if (!isNaN(proPrice) && proPrice > 0) {
+              prices.push({ productName: "deepseek-v4-pro 输入(缓存命中)", billingMode: "按量", price: proPrice, unit: "元/百万Token" });
+            }
+          } else if (key === "1m input tokens (cache miss)" && cells.length >= 3) {
+            const flashPrice = parseFloat(cells[1].replace(/[^0-9.]/g, ""));
+            const proPrice = cells.length >= 3 ? parseFloat(cells[2].replace(/[^0-9.]/g, "")) : 0;
             if (!isNaN(flashPrice) && flashPrice > 0) {
               prices.push({ productName: "deepseek-v4-flash 输入(缓存未命中)", billingMode: "按量", price: flashPrice, unit: "元/百万Token" });
             }
             if (!isNaN(proPrice) && proPrice > 0) {
               prices.push({ productName: "deepseek-v4-pro 输入(缓存未命中)", billingMode: "按量", price: proPrice, unit: "元/百万Token" });
             }
-          } else if (key === "1m output tokens" && cells.length >= 4) {
-            const flashPrice = parseFloat(cells[2].replace(/[^0-9.]/g, ""));
-            const proPrice = parseFloat(cells[3].replace(/[^0-9.]/g, ""));
+          } else if (key === "1m output tokens" && cells.length >= 3) {
+            const flashPrice = parseFloat(cells[1].replace(/[^0-9.]/g, ""));
+            const proPrice = cells.length >= 3 ? parseFloat(cells[2].replace(/[^0-9.]/g, "")) : 0;
             if (!isNaN(flashPrice) && flashPrice > 0) {
               prices.push({ productName: "deepseek-v4-flash 输出", billingMode: "按量", price: flashPrice, unit: "元/百万Token" });
             }

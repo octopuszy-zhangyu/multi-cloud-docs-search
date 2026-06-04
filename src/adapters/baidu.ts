@@ -1,5 +1,5 @@
 import * as cheerio from "cheerio";
-import { CloudDocAdapter, type Product, type TocItem, type SearchResult, type PageMetadata, type PriceItem, type PriceResult, type PaginatedResult, type ListProductsOptions, type TocOptions, type PriceQueryOptions } from "./base.js";
+import { CloudDocAdapter, type Product, type TocItem, type SearchResult, type PageMetadata, type PriceItem, type PriceResult, type SpecPriceItem, type PaginatedResult, type ListProductsOptions, type TocOptions, type PriceQueryOptions } from "./base.js";
 import { htmlToMarkdown } from "../utils/html-to-md.js";
 
 const BASE_URL = "https://cloud.baidu.com";
@@ -261,5 +261,167 @@ export class BaiduAdapter extends CloudDocAdapter {
       updateDate: undefined,
       dataStatus,
     };
+  }
+
+  /**
+   * 构建百度云 BCC 规格-配置-价格联合表
+   * 从价格计算器 API 获取规格和价格数据
+   */
+  async buildSpecPriceTable(productId?: string): Promise<SpecPriceItem[]> {
+    // 只处理 BCC 产品
+    if (!productId || productId.toUpperCase() !== "BCC") {
+      return super.buildSpecPriceTable(productId);
+    }
+
+    const specItems: SpecPriceItem[] = [];
+    const seen = new Set<string>();
+
+    try {
+      // Step 1: 获取可用规格列表
+      const flavorRes = await this.fetchWithRetry("https://cloud.baidu.com/api/calculator/bccFlavor", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json;charset=UTF-8",
+          "Accept": "application/json",
+          "Referer": "https://cloud.baidu.com/price/calculator?product=bcc",
+        },
+        body: JSON.stringify({ region: "su", ignoreReservedInstanceProductType: true }),
+      });
+
+      if (!flavorRes.ok) {
+        console.error(`百度云规格列表获取失败: ${flavorRes.status}`);
+        return specItems;
+      }
+
+      const flavorData = await flavorRes.json() as Record<string, unknown>;
+      const flavorResult = flavorData?.result as Record<string, unknown> | undefined;
+      const zoneResources = flavorResult?.zoneResources as Array<Record<string, unknown>> | undefined;
+
+      if (!flavorData?.success || !zoneResources) {
+        console.error("百度云规格列表解析失败");
+        return specItems;
+      }
+
+      // 收集所有规格
+      const allFlavors: Array<{ spec: string; cpu: number; mem: number; instanceType: number; family: string; familyName: string }> = [];
+      for (const zone of zoneResources) {
+        const bccResources = zone?.bccResources as Record<string, unknown> | undefined;
+        const flavorGroups = bccResources?.flavorGroups as Array<Record<string, unknown>> | undefined || [];
+        for (const group of flavorGroups) {
+          const groupName = group?.groupName as string || "";
+          const flavors = group?.flavors as Array<Record<string, unknown>> | undefined || [];
+          for (const flavor of flavors) {
+            const spec = flavor?.spec as string | undefined;
+            const cpuCount = flavor?.cpuCount as number | undefined;
+            const memoryCapacityInGB = flavor?.memoryCapacityInGB as number | undefined;
+            if (spec && cpuCount && memoryCapacityInGB) {
+              allFlavors.push({
+                spec,
+                cpu: cpuCount,
+                mem: memoryCapacityInGB,
+                instanceType: (flavor?.instanceType as number) || 0,
+                family: (flavor?.instanceFamily as string) || "",
+                familyName: (flavor?.specFamily as string) || groupName,
+              });
+            }
+          }
+        }
+      }
+
+      console.log(`百度云找到 ${allFlavors.length} 个规格`);
+
+      // Step 2: 批量查询价格（每批最多 10 个规格）
+      const batchSize = 10;
+      for (let i = 0; i < allFlavors.length; i += batchSize) {
+        const batch = allFlavors.slice(i, i + batchSize);
+
+        try {
+          const bccList = batch.map(f => ({
+            productType: "prepay",
+            instanceType: f.instanceType,
+            cpu: f.cpu,
+            memory: f.mem,
+            ephemeralSizeGb: 0,
+            fpgaCard: "",
+            fpgaCount: 0,
+            containsFpga: true,
+            gpuCard: "",
+            gpuCount: 0,
+            kunlunCard: "",
+            kunlunCount: 0,
+            spec: f.spec,
+            specId: f.family.toLowerCase(),
+          }));
+
+          const priceRes = await this.fetchWithRetry("https://cloud.baidu.com/api/calculator/bcc/instance/priceV2", {
+            method: "POST",
+            headers: {
+              "Content-Type": "application/json;charset=UTF-8",
+              "Accept": "application/json",
+              "Referer": "https://cloud.baidu.com/price/calculator?product=bcc",
+            },
+            body: JSON.stringify({
+              purchaseLengthList: [1, 12],
+              purchaseNum: 1,
+              region: "su",
+              bccList,
+            }),
+          });
+
+          if (priceRes.ok) {
+            const priceData = await priceRes.json() as Record<string, unknown>;
+            const priceResult = priceData?.result as Record<string, unknown> | undefined;
+            const bccPayResults = priceResult?.bccPayResults as Record<string, unknown> | undefined;
+            const bccResults = bccPayResults?.bccResults as Array<Record<string, unknown>> | undefined;
+
+            if (priceData?.success && bccResults && bccResults.length > 0) {
+              // bccResults 按输入顺序返回，每批有 2 * batchSize 个结果（1个月 + 12个月）
+              const purchaseLengthList = [1, 12]; // 购买时长列表
+              const resultsPerDuration = batch.length; // 每个时长的结果数
+
+              // 合并规格和价格
+              for (let i = 0; i < batch.length; i++) {
+                const flavor = batch[i];
+                const displayName = `${flavor.cpu}C${flavor.mem}G`;
+
+                // 遍历每个购买时长
+                for (let d = 0; d < purchaseLengthList.length; d++) {
+                  const resultIndex = d * resultsPerDuration + i;
+                  const result = bccResults[resultIndex];
+                  if (!result) continue;
+
+                  const price = result?.price as number | undefined;
+                  if (!price || price <= 0) continue;
+
+                  const duration = purchaseLengthList[d];
+                  const key = `${flavor.spec}_${duration}月`;
+
+                  if (!seen.has(key)) {
+                    seen.add(key);
+                    specItems.push({
+                      specName: flavor.spec,
+                      cpu: flavor.cpu,
+                      mem: flavor.mem,
+                      displayName,
+                      region: "苏州",
+                      billingMode: duration === 1 ? "包月" : `包${duration}月`,
+                      price,
+                      unit: "元/月",
+                      familyName: flavor.familyName,
+                    });
+                  }
+                }
+              }
+            }
+          }
+        } catch (err) {
+          console.error(`百度云价格批量查询失败: ${err instanceof Error ? err.message : String(err)}`);
+        }
+      }
+    } catch (err) {
+      console.error(`百度云规格价格表构建失败: ${err instanceof Error ? err.message : String(err)}`);
+    }
+
+    return specItems;
   }
 }

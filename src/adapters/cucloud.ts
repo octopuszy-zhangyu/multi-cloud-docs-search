@@ -442,23 +442,23 @@ export class CucloudAdapter extends CloudDocAdapter {
 
     try {
       // 搜索包含规格价格表的文档
-      const keywords = ["规格", "价格", "云服务器", "配置", "CPU", "内存"];
-      
+      // 注意：ECS 定价文档可能不在 productId=128 下，需要搜索多个关键词
+      const keywords = ["规格", "价格", "云服务器", "配置", "CPU", "内存", "计费规则", "日单价", "vcpu", "s1.large", "s2.large", "月单价", "通用型", "内存型"];
+
       for (const keyword of keywords) {
-        const url = `${SEARCH_API}/product/queryAll?index=cms_document&pageNo=1&pageSize=20&keyword=${encodeURIComponent(keyword)}&productId=${productId}&referrer=${encodeURIComponent(SUPPORT_URL)}`;
-        
+        // 先在当前 productId 下搜索
+        let url = `${SEARCH_API}/product/queryAll?index=cms_document&pageNo=1&pageSize=20&keyword=${encodeURIComponent(keyword)}&productId=${productId}&referrer=${encodeURIComponent(SUPPORT_URL)}`;
+
         try {
-          const data = await this.fetchSearchApi<SearchResponse>(url);
-          
+          let data = await this.fetchSearchApi<SearchResponse>(url);
+
           if (data.data?.docList && data.data.docList.length > 0) {
             for (const doc of data.data.docList) {
               const content = doc.content.replace(/<[^>]+>/g, "");
-              
-              // 解析规格表 - 尝试匹配常见的规格表格格式
-              // 格式1: 规格名称 | CPU | 内存 | 价格
-              // 格式2: 2C4G | 2核 | 4GB | xxx元/月
+
+              // 解析规格表
               const specItemsFromContent = this.parseSpecTableFromContent(content);
-              
+
               for (const item of specItemsFromContent) {
                 const key = `${item.specName}_${item.billingMode}`;
                 if (!seen.has(key)) {
@@ -466,15 +466,76 @@ export class CucloudAdapter extends CloudDocAdapter {
                   specItems.push(item);
                 }
               }
-              
-              if (specItems.length > 0) break;
             }
           }
         } catch {
-          continue;
+          // ignore
         }
-        
+
+        // 如果在当前 productId 下没找到足够的规格，尝试不带 productId 搜索
+        if (specItems.length < 5) {
+          url = `${SEARCH_API}/product/queryAll?index=cms_document&pageNo=1&pageSize=20&keyword=${encodeURIComponent(keyword + " s1.large")}&referrer=${encodeURIComponent(SUPPORT_URL)}`;
+
+          try {
+            const data = await this.fetchSearchApi<SearchResponse>(url);
+
+            if (data.data?.docList && data.data.docList.length > 0) {
+              for (const doc of data.data.docList) {
+                const content = doc.content.replace(/<[^>]+>/g, "");
+
+                // 解析规格表
+                const specItemsFromContent = this.parseSpecTableFromContent(content);
+
+                for (const item of specItemsFromContent) {
+                  const key = `${item.specName}_${item.billingMode}`;
+                  if (!seen.has(key)) {
+                    seen.add(key);
+                    specItems.push(item);
+                  }
+                }
+              }
+            }
+          } catch {
+            // ignore
+          }
+        }
+
         if (specItems.length > 0) break;
+      }
+
+      // 如果搜索结果不够，尝试直接访问已知的定价文档
+      if (specItems.length < 5) {
+        const knownPriceDocIds = [
+          "2692",   // 计费说明 - 包含 ECS 规格价格表
+          "3306",   // 计费说明 - 包含 ECS 规格价格表
+          "3274",   // 产品价格 - 包含日单价
+        ];
+
+        for (const docId of knownPriceDocIds) {
+          try {
+            // 不带 productId 搜索文档 ID
+            const url = `${SEARCH_API}/product/queryAll?index=cms_document&pageNo=1&pageSize=5&keyword=${encodeURIComponent(docId)}&referrer=${encodeURIComponent(SUPPORT_URL)}`;
+            const data = await this.fetchSearchApi<SearchResponse>(url);
+
+            if (data.data?.docList && data.data.docList.length > 0) {
+              const doc = data.data.docList.find(d => String(d.document_id) === docId);
+              if (doc) {
+                const content = doc.content.replace(/<[^>]+>/g, "");
+
+                const specItemsFromContent = this.parseSpecTableFromContent(content);
+                for (const item of specItemsFromContent) {
+                  const key = `${item.specName}_${item.billingMode}`;
+                  if (!seen.has(key)) {
+                    seen.add(key);
+                    specItems.push(item);
+                  }
+                }
+              }
+            }
+          } catch {
+            continue;
+          }
+        }
       }
 
       // 如果从搜索结果中没找到足够的规格，尝试直接访问定价页面
@@ -536,6 +597,50 @@ export class CucloudAdapter extends CloudDocAdapter {
     
     // 模式4: 表格格式 | 规格 | CPU | 内存 | 价格 |
     const tablePattern = /\|([^|]+)\|([^|]+)\|([^|]+)\|([^|]+)\|/;
+
+    // 模式5: 联通云计费规则格式: 型号 | vCPU | 内存 | 月单价
+    // 如: s1.large4 | 2vCPU | 4GB | 204
+    const specPattern5 = /([a-z0-9.]+(?:large|xlarge|medium|small)?)\s*\|\s*(\d+)\s*v?CPU\s*\|\s*(\d+)\s*[Gg][Bb]?\s*\|\s*([\d.]+)/i;
+
+    // 模式6: 联通云计费说明格式: 规格名称 | vcpu-核 | 内存-G | 月单价（元/月）
+    // 如: s1.large4 | 2 | 4GB | 204.71
+    const specPattern6 = /([a-z0-9.]+(?:large|xlarge|medium|small)?)\s*\|\s*(\d+)\s*\|\s*(\d+)\s*[Gg][Bb]?\s*\|\s*([\d,]+)/i;
+
+    // 模式7: 联通云搜索 API 返回的拼接格式: s1.large42vCPU4GB204
+    // 使用 vCPU 作为分隔符，对整个内容进行匹配
+    // 已知规格前缀和对应的内存大小
+    const specPatterns = [
+      { prefix: "s1.large", mem: [4, 8] },
+      { prefix: "s1.xlarge", mem: [8, 16] },
+      { prefix: "s1.2xlarge", mem: [16, 32] },
+      { prefix: "s1.4xlarge", mem: [32, 64] },
+      { prefix: "s1.8xlarge", mem: [64, 128] },
+    ];
+
+    for (const { prefix, mem } of specPatterns) {
+      for (const m of mem) {
+        const pattern = prefix + m + "(\\d+)vCPU" + m + "GB(\\d+)";
+        const regex = new RegExp(pattern, "gi");
+        let match;
+        while ((match = regex.exec(content)) !== null) {
+          const cpu = parseInt(match[1]);
+          const price = parseFloat(match[2]);
+          if (cpu > 0 && price > 0) {
+            const specName = prefix + m;
+            const displayName = `${cpu}C${m}G`;
+            specItems.push({
+              specName,
+              cpu,
+              mem: m,
+              displayName,
+              billingMode: "包月",
+              price,
+              unit: "元/月",
+            });
+          }
+        }
+      }
+    }
     
     for (const line of lines) {
       // 尝试模式1
@@ -618,8 +723,53 @@ export class CucloudAdapter extends CloudDocAdapter {
           });
         }
       }
+
+      // 尝试模式5: 联通云计费规则格式: 型号 | vCPU | 内存 | 月单价
+      match = line.match(specPattern5);
+      if (match) {
+        const specName = match[1];
+        const cpu = parseInt(match[2]);
+        const mem = parseInt(match[3]);
+        const price = parseFloat(match[4]);
+
+        if (cpu > 0 && mem > 0 && price > 0) {
+          const displayName = `${cpu}C${mem}G`;
+          specItems.push({
+            specName,
+            cpu,
+            mem,
+            displayName,
+            billingMode: "包月",
+            price,
+            unit: "元/月",
+          });
+        }
+      }
+
+      // 尝试模式6: 联通云计费说明格式: 规格名称 | vcpu-核 | 内存-G | 月单价
+      // 如: s1.large4 | 2 | 4GB | 204.71
+      match = line.match(specPattern6);
+      if (match) {
+        const specName = match[1];
+        const cpu = parseInt(match[2]);
+        const mem = parseInt(match[3]);
+        const price = parseFloat(match[4].replace(/,/g, ""));
+
+        if (cpu > 0 && mem > 0 && price > 0) {
+          const displayName = `${cpu}C${mem}G`;
+          specItems.push({
+            specName,
+            cpu,
+            mem,
+            displayName,
+            billingMode: "包月",
+            price,
+            unit: "元/月",
+          });
+        }
+      }
     }
-    
+
     // 尝试解析表格格式
     const tableLines = content.split('\n').filter(l => l.trim().startsWith('|'));
     for (const tableLine of tableLines) {
