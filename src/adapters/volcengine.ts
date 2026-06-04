@@ -400,35 +400,69 @@ export class VolcengineAdapter extends CloudDocAdapter {
         const templateCode = await this.getTemplateCode(productCode);
         if (!templateCode) continue;
 
-        const tableRes = await this.fetchWithRetry(
-          `${BASE_URL}/anonymous-api/trade/price?Action=GetTable&Version=2020-01-01`,
-          {
-            method: "POST",
-            headers: {
-              "Content-Type": "application/json",
-              "Accept": "application/json",
-              "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36",
-            },
-            body: JSON.stringify({ TemplateCode: templateCode }),
+        // 并行获取按量和包月价格
+        const [hourlyRes, monthlyRes] = await Promise.all([
+          this.fetchWithRetry(
+            `${BASE_URL}/anonymous-api/trade/price?Action=GetTable&Version=2020-01-01&period=hourly&times=1`,
+            {
+              method: "POST",
+              headers: {
+                "Content-Type": "application/json",
+                "Accept": "application/json",
+                "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36",
+              },
+              body: JSON.stringify({ TemplateCode: templateCode }),
+            }
+          ),
+          this.fetchWithRetry(
+            `${BASE_URL}/anonymous-api/trade/price?Action=GetTable&Version=2020-01-01&period=monthly&times=1`,
+            {
+              method: "POST",
+              headers: {
+                "Content-Type": "application/json",
+                "Accept": "application/json",
+                "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36",
+              },
+              body: JSON.stringify({ TemplateCode: templateCode }),
+            }
+          ),
+        ]);
+
+        // 解析按量价格
+        if (hourlyRes.ok) {
+          const tableData = await hourlyRes.json() as any;
+          const tableList = tableData?.Result?.TableList || [];
+          for (const table of tableList) {
+            const rows = table.Rows || [];
+            for (const row of rows) {
+              const productName = row.Product || "";
+              if (productCode && !productName.toLowerCase().includes(productCode.toLowerCase())) continue;
+              allRows.push({
+                productName,
+                configCode: row.ConfigurationCode || "",
+                chargeItemCode: row.ChargeItemCode || "",
+                priceInfoList: row.PriceInfoList || [],
+              });
+            }
           }
-        );
+        }
 
-        if (!tableRes.ok) continue;
-
-        const tableData = await tableRes.json() as any;
-        const tableList = tableData?.Result?.TableList || [];
-
-        for (const table of tableList) {
-          const rows = table.Rows || [];
-          for (const row of rows) {
-            const productName = row.Product || "";
-            if (productCode && !productName.toLowerCase().includes(productCode.toLowerCase())) continue;
-            allRows.push({
-              productName,
-              configCode: row.ConfigurationCode || "",
-              chargeItemCode: row.ChargeItemCode || "",
-              priceInfoList: row.PriceInfoList || [],
-            });
+        // 解析包月价格
+        if (monthlyRes.ok) {
+          const tableData = await monthlyRes.json() as any;
+          const tableList = tableData?.Result?.TableList || [];
+          for (const table of tableList) {
+            const rows = table.Rows || [];
+            for (const row of rows) {
+              const productName = row.Product || "";
+              if (productCode && !productName.toLowerCase().includes(productCode.toLowerCase())) continue;
+              allRows.push({
+                productName,
+                configCode: row.ConfigurationCode || "",
+                chargeItemCode: row.ChargeItemCode || "",
+                priceInfoList: row.PriceInfoList || [],
+              });
+            }
           }
         }
       }

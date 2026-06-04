@@ -1,5 +1,5 @@
 import * as cheerio from "cheerio";
-import { CloudDocAdapter, type Product, type TocItem, type SearchResult, type PageMetadata, type PriceItem, type PriceResult, type PaginatedResult, type ListProductsOptions, type TocOptions, type PriceQueryOptions } from "./base.js";
+import { CloudDocAdapter, type Product, type TocItem, type SearchResult, type PageMetadata, type PriceItem, type PriceResult, type SpecPriceItem, type PaginatedResult, type ListProductsOptions, type TocOptions, type PriceQueryOptions } from "./base.js";
 import { htmlToMarkdown } from "../utils/html-to-md.js";
 
 const SUPPORT_URL = "https://support.cucloud.cn";
@@ -106,11 +106,11 @@ export class CucloudAdapter extends CloudDocAdapter {
       return { items: [], total: 0, page: 1, pageSize: 200, hasMore: false };
     }
 
-    // 尝试多个关键词变体，确保能获取到文档列表
+    // 尝试多个关键词变体，确保能够获取到文档列表
     const keywords = [
       product.name,
-      product.name.replace(/[（(].*[）)]/, ""),
-      ...product.name.split(/[（(]/).filter(s => s.trim().length > 0),
+      product.name.replace(/[（].*[）]/, ""),
+      ...product.name.split(/[（]/).filter(s => s.trim().length > 0),
     ].filter((v, i, a) => v && a.indexOf(v) === i);
 
     let data: SearchResponse | null = null;
@@ -161,7 +161,7 @@ export class CucloudAdapter extends CloudDocAdapter {
 
     let items = Array.from(tocMap.values());
 
-    // 过滤掉 pageId 为空的条目（class_id 是分类 ID，不是文档 ID）
+    // 过滤掉 pageId 为空的条（class_id 是分类 ID，不是文档 ID）
     items = items.filter((item) => item.pageId && item.pageId.trim().length > 0);
 
     // Keyword filtering
@@ -328,7 +328,7 @@ export class CucloudAdapter extends CloudDocAdapter {
 
     if (!productId) {
       return this.makePriceResult([], {
-        message: "联通云价格查询：请指定 productId。常用产品：128（云服务器 ECS）、2357（AI服务平台 AISP）、1398（AICP）。示例：get_product_price({ provider: \"cucloud\", productId: \"128\" })",
+        message: "联通云价格查询：请指定 productId。常用产品：128（云服务器 ECS）、357（AI服务平台 AISP）、398（AICP）。示例：get_product_price({ provider: \"cucloud\", productId: \"128\" })",
       });
     }
 
@@ -386,10 +386,10 @@ export class CucloudAdapter extends CloudDocAdapter {
           for (const doc of data.data.docList) {
             const content = doc.content.replace(/<[^>]+>/g, "");
 
-            // Extract vCPU price - pattern: vcpu元/核按量（日）55.89
-            const vcpuMatch = content.match(/vcpu\s*元\/核.*?按量.*?日.*?([\d.]+)|CPU\s*[¥￥]\s*([\d.]+)/i);
-            // Extract memory price - pattern: 内存元/G按量（日）11.50
-            const memMatch = content.match(/内存\s*元\/G.*?按量.*?日.*?([\d.]+)/i);
+            // Extract vCPU price - pattern: vcpu核按量（日）55.89
+            const vcpuMatch = content.match(/vcpu\s*核\s*按量.*?日.*?([\d.]+)|CPU\s*核\s*按量.*?([\d.]+)/i);
+            // Extract memory price - pattern: 内存1G按量（日）1.50
+            const memMatch = content.match(/内存\s*\d+G\s*按量.*?日.*?([\d.]+)/i);
 
             if (vcpuMatch || memMatch) {
               const vcpuPrice = vcpuMatch ? parseFloat(vcpuMatch[1] || vcpuMatch[2]) : 0;
@@ -425,5 +425,255 @@ export class CucloudAdapter extends CloudDocAdapter {
     }
 
     return prices;
+  }
+
+  /**
+   * 构建联通云 ECS 规格-配置-价格联合表
+   * 从定价文档中解析规格表，获取 specName, cpu, mem, price 信息
+   */
+  async buildSpecPriceTable(productId?: string): Promise<SpecPriceItem[]> {
+    // 只处理 ECS (productId = "128")
+    if (!productId || productId !== "128") {
+      return super.buildSpecPriceTable(productId);
+    }
+
+    const specItems: SpecPriceItem[] = [];
+    const seen = new Set<string>();
+
+    try {
+      // 搜索包含规格价格表的文档
+      const keywords = ["规格", "价格", "云服务器", "配置", "CPU", "内存"];
+      
+      for (const keyword of keywords) {
+        const url = `${SEARCH_API}/product/queryAll?index=cms_document&pageNo=1&pageSize=20&keyword=${encodeURIComponent(keyword)}&productId=${productId}&referrer=${encodeURIComponent(SUPPORT_URL)}`;
+        
+        try {
+          const data = await this.fetchSearchApi<SearchResponse>(url);
+          
+          if (data.data?.docList && data.data.docList.length > 0) {
+            for (const doc of data.data.docList) {
+              const content = doc.content.replace(/<[^>]+>/g, "");
+              
+              // 解析规格表 - 尝试匹配常见的规格表格格式
+              // 格式1: 规格名称 | CPU | 内存 | 价格
+              // 格式2: 2C4G | 2核 | 4GB | xxx元/月
+              const specItemsFromContent = this.parseSpecTableFromContent(content);
+              
+              for (const item of specItemsFromContent) {
+                const key = `${item.specName}_${item.billingMode}`;
+                if (!seen.has(key)) {
+                  seen.add(key);
+                  specItems.push(item);
+                }
+              }
+              
+              if (specItems.length > 0) break;
+            }
+          }
+        } catch {
+          continue;
+        }
+        
+        if (specItems.length > 0) break;
+      }
+
+      // 如果从搜索结果中没找到足够的规格，尝试直接访问定价页面
+      if (specItems.length === 0) {
+        const pricePageUrls = [
+          `${SUPPORT_URL}/document/12831001.html`,  // 常见的价格文档页面
+          `${SUPPORT_URL}/document/12831002.html`,
+        ];
+
+        for (const url of pricePageUrls) {
+          try {
+            const html = await this.fetchHtml(url);
+            const $ = cheerio.load(html);
+            const bodyText = $("body").text();
+            
+            const specItemsFromPage = this.parseSpecTableFromContent(bodyText);
+            
+            for (const item of specItemsFromPage) {
+              const key = `${item.specName}_${item.billingMode}`;
+              if (!seen.has(key)) {
+                seen.add(key);
+                specItems.push(item);
+              }
+            }
+            
+            if (specItems.length > 0) break;
+          } catch {
+            continue;
+          }
+        }
+      }
+    } catch (err) {
+      console.error(`联通云规格价格表构建失败: ${err instanceof Error ? err.message : String(err)}`);
+    }
+
+    return specItems;
+  }
+
+  /**
+   * 从文档内容中解析规格表
+   * 尝试匹配多种格式：
+   * 1. 规格名称 CPU核数 内存 价格
+   * 2. 2C4G 2核 4GB xxx元/月
+   * 3. ecs.s5.large 2 4 xxx
+   */
+  private parseSpecTableFromContent(content: string): SpecPriceItem[] {
+    const specItems: SpecPriceItem[] = [];
+    const lines = content.split(/[\n\r]+/);
+    
+    // 匹配规格行的模式
+    // 模式1: 规格名 CPU核 内存 价格 (如: 2C4G 2核 4GB 100元/月)
+    const specPattern1 = /([\d]+C[\d]+G)\s*([\d]+)\s*核\s*([\d]+)\s*[Gg][Bb]?\s*([\d.]+)\s*(?:元\/月|元\/小时|元\/日|元\/年)?/i;
+    
+    // 模式2: 规格名 CPU 内存 价格 (如: ecs.s5.large 2 4 100)
+    const specPattern2 = /(ecs\.[a-z0-9.]+)\s+(\d+)\s+(\d+)\s+([\d.]+)/i;
+    
+    // 模式3: 通用规格格式 (如: 2核4GB 100元/月)
+    const specPattern3 = /([\d]+)\s*核\s*([\d]+)\s*[Gg][Bb]?\s*([\d.]+)\s*(?:元\/月|元\/小时|元\/日|元\/年)?/i;
+    
+    // 模式4: 表格格式 | 规格 | CPU | 内存 | 价格 |
+    const tablePattern = /\|([^|]+)\|([^|]+)\|([^|]+)\|([^|]+)\|/;
+    
+    for (const line of lines) {
+      // 尝试模式1
+      let match = line.match(specPattern1);
+      if (match) {
+        const displayName = match[1];
+        const cpu = parseInt(match[2]);
+        const mem = parseInt(match[3]);
+        const price = parseFloat(match[4]);
+        
+        if (cpu > 0 && mem > 0 && price > 0) {
+          specItems.push({
+            specName: displayName,
+            cpu,
+            mem,
+            displayName,
+            billingMode: "包月",
+            price,
+            unit: "元/月",
+          });
+          
+          // 同时添加按量价格（如果价格看起来是按量价格）
+          if (price < 10) {  // 按量价格通常较小
+            specItems.push({
+              specName: displayName,
+              cpu,
+              mem,
+              displayName,
+              billingMode: "按量",
+              price,
+              unit: "元/小时",
+            });
+          }
+        }
+        continue;
+      }
+      
+      // 尝试模式2
+      match = line.match(specPattern2);
+      if (match) {
+        const specName = match[1];
+        const cpu = parseInt(match[2]);
+        const mem = parseInt(match[3]);
+        const price = parseFloat(match[4]);
+        
+        if (cpu > 0 && mem > 0 && price > 0) {
+          const displayName = `${cpu}C${mem}G`;
+          specItems.push({
+            specName,
+            cpu,
+            mem,
+            displayName,
+            billingMode: "包月",
+            price,
+            unit: "元/月",
+          });
+        }
+        continue;
+      }
+      
+      // 尝试模式3
+      match = line.match(specPattern3);
+      if (match) {
+        const cpu = parseInt(match[1]);
+        const mem = parseInt(match[2]);
+        const price = parseFloat(match[3]);
+        
+        if (cpu > 0 && mem > 0 && price > 0) {
+          const displayName = `${cpu}C${mem}G`;
+          const specName = `ecs.${cpu}c${mem}g`;
+          
+          specItems.push({
+            specName,
+            cpu,
+            mem,
+            displayName,
+            billingMode: "包月",
+            price,
+            unit: "元/月",
+          });
+        }
+      }
+    }
+    
+    // 尝试解析表格格式
+    const tableLines = content.split('\n').filter(l => l.trim().startsWith('|'));
+    for (const tableLine of tableLines) {
+      const cells = tableLine.split('|').filter(c => c.trim().length > 0).map(c => c.trim());
+      
+      if (cells.length >= 4) {
+        // 尝试从第一列提取规格信息
+        const firstCol = cells[0];
+        
+        // 匹配 "2C4G" 或 "2核4GB" 格式
+        const displayMatch = firstCol.match(/(\d+)C(\d+)G/i) || firstCol.match(/(\d+)\s*核\s*(\d+)\s*[Gg][Bb]?/i);
+        
+        if (displayMatch) {
+          const cpu = parseInt(displayMatch[1]);
+          const mem = parseInt(displayMatch[2]);
+          
+          // 从最后一列获取价格
+          const lastCol = cells[cells.length - 1];
+          const priceMatch = lastCol.match(/([\d.]+)/);
+          
+          if (priceMatch && cpu > 0 && mem > 0) {
+            const price = parseFloat(priceMatch[1]);
+            const displayName = `${cpu}C${mem}G`;
+            
+            // 检查是否有计费模式信息
+            let billingMode = "包月";
+            let unit = "元/月";
+            
+            // 查找包含"按量"或"小时"的列
+            for (let i = 1; i < cells.length - 1; i++) {
+              if (cells[i].includes("按量") || cells[i].includes("小时")) {
+                billingMode = "按量";
+                unit = "元/小时";
+                break;
+              }
+            }
+            
+            const key = `${displayName}_${billingMode}`;
+            if (!specItems.some(s => `${s.displayName}_${s.billingMode}` === key)) {
+              specItems.push({
+                specName: displayName,
+                cpu,
+                mem,
+                displayName,
+                billingMode,
+                price,
+                unit,
+              });
+            }
+          }
+        }
+      }
+    }
+    
+    return specItems;
   }
 }

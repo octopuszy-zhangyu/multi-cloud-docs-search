@@ -1,4 +1,4 @@
-import * as cheerio from "cheerio";
+﻿import * as cheerio from "cheerio";
 import { CloudDocAdapter, type Product, type TocItem, type SearchResult, type PageMetadata, type PriceItem, type PriceResult, type PaginatedResult, type ListProductsOptions, type TocOptions, type PriceQueryOptions } from "./base.js";
 import { htmlToMarkdown } from "../utils/html-to-md.js";
 
@@ -180,51 +180,80 @@ export class DeepseekAdapter extends CloudDocAdapter {
   /**
    * 从 Markdown 表格中解析价格数据
    */
+  /**
+   * 从 HTML 表格中解析 DeepSeek 价格数据
+   * DeepSeek 定价页面使用 key-value 风格的 HTML 表格，不是标准 Markdown 表格
+   */
+  /**
+   * 从 Markdown 表格中解析 DeepSeek 价格数据
+   * DeepSeek 定价页面使用 key-value 风格的表格
+   */
   private parsePriceTable(markdown: string): PriceItem[] {
     const prices: PriceItem[] = [];
     const lines = markdown.split("\n");
     let inTable = false;
-    let headers: string[] = [];
 
     for (const line of lines) {
-      // 检测表格开始（包含 | 的行）
       if (line.trim().startsWith("|") && line.trim().endsWith("|")) {
         const cells = line.split("|").map((c) => c.trim()).filter(Boolean);
 
         if (!inTable) {
-          // 表头行
-          headers = cells;
           inTable = true;
           continue;
         }
 
-        // 跳过分隔行（|---|）
+        // Skip separator rows (|---|)
         if (cells.every((c) => /^[-:\s]+$/.test(c))) {
           continue;
         }
 
-        // 数据行
-        if (cells.length >= 2) {
-          const productName = cells[0] || "";
-          const priceStr = cells[cells.length - 1] || "0";
-          const price = parseFloat(priceStr.replace(/[^0-9.]/g, ""));
-          const spec = cells.length > 2 ? cells.slice(1, -1).join(" / ") : "";
+        // Parse key-value style table rows
+        // Format: PRICING | 1M INPUT TOKENS (CACHE HIT) | $0.0028 | $0.003625
+        // Format: 1M INPUT TOKENS (CACHE MISS) | $0.14 | $0.435
+        // Format: 1M OUTPUT TOKENS | $0.28 | $0.87
+        if (cells.length >= 4) {
+          const key = cells[0].toLowerCase();
 
-          if (!isNaN(price)) {
-            prices.push({
-              productName,
-              billingMode: "按量",
-              price,
-              unit: priceStr.includes("$") ? "元/百万Token" : "元/百万Token",
-            });
+          if (key === "pricing" && cells.length >= 4) {
+            // PRICING row: PRICING | 1M INPUT TOKENS (CACHE HIT) | $0.0028 | $0.003625
+            // Skip - the actual data is in subsequent rows
+            continue;
+          }
+
+          if (key === "1m input tokens (cache hit)" && cells.length >= 4) {
+            const flashPrice = parseFloat(cells[2].replace(/[^0-9.]/g, ""));
+            const proPrice = parseFloat(cells[3].replace(/[^0-9.]/g, ""));
+            if (!isNaN(flashPrice) && flashPrice > 0) {
+              prices.push({ productName: "deepseek-v4-flash 输入(缓存命中)", billingMode: "按量", price: flashPrice, unit: "元/百万Token" });
+            }
+            if (!isNaN(proPrice) && proPrice > 0) {
+              prices.push({ productName: "deepseek-v4-pro 输入(缓存命中)", billingMode: "按量", price: proPrice, unit: "元/百万Token" });
+            }
+          } else if (key === "1m input tokens (cache miss)" && cells.length >= 4) {
+            const flashPrice = parseFloat(cells[2].replace(/[^0-9.]/g, ""));
+            const proPrice = parseFloat(cells[3].replace(/[^0-9.]/g, ""));
+            if (!isNaN(flashPrice) && flashPrice > 0) {
+              prices.push({ productName: "deepseek-v4-flash 输入(缓存未命中)", billingMode: "按量", price: flashPrice, unit: "元/百万Token" });
+            }
+            if (!isNaN(proPrice) && proPrice > 0) {
+              prices.push({ productName: "deepseek-v4-pro 输入(缓存未命中)", billingMode: "按量", price: proPrice, unit: "元/百万Token" });
+            }
+          } else if (key === "1m output tokens" && cells.length >= 4) {
+            const flashPrice = parseFloat(cells[2].replace(/[^0-9.]/g, ""));
+            const proPrice = parseFloat(cells[3].replace(/[^0-9.]/g, ""));
+            if (!isNaN(flashPrice) && flashPrice > 0) {
+              prices.push({ productName: "deepseek-v4-flash 输出", billingMode: "按量", price: flashPrice, unit: "元/百万Token" });
+            }
+            if (!isNaN(proPrice) && proPrice > 0) {
+              prices.push({ productName: "deepseek-v4-pro 输出", billingMode: "按量", price: proPrice, unit: "元/百万Token" });
+            }
           }
         }
         continue;
       }
 
-      // 非表格行，重置表格状态
+      // Non-table line resets table state
       if (inTable && line.trim() !== "") {
-        // 表格结束
         inTable = false;
       }
     }
@@ -251,3 +280,5 @@ export class DeepseekAdapter extends CloudDocAdapter {
     return this.makePriceResult(prices, { updateDate: undefined });
   }
 }
+
+
