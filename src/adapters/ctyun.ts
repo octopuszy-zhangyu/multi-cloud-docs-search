@@ -554,9 +554,22 @@ export class CtyunAdapter extends CloudDocAdapter {
     if (!productId) {
       return this.makePriceResult([], {
         updateDate: new Date().toISOString().split("T")[0],
-        message: "天翼云价格查询：请指定 productId。常用产品：10027004（云电脑政企版）、10026730（弹性云主机 ECS）、11061839（Token 服务）。示例：get_product_price({ provider: \"ctyun\", productId: \"10027004\" })",
+        message: "天翼云价格查询：请指定 productId。\n" +
+          "支持实时 API 价格的产品：\n" +
+          "  - 10027004（天翼云电脑政企版）\n" +
+          "  - 10026730（弹性云主机 ECS）\n" +
+          "其他产品（如云硬盘 EVS=10027696 等）请通过文档获取价格：\n" +
+          "  search_documents(provider=\"ctyun\", productId=\"xxx\", keyword=\"价格\")\n" +
+          "示例：get_product_price({ provider: \"ctyun\", productId: \"10027004\" })",
       });
     }
+
+    // 已有实时价格 API 的产品
+    const API_PRODUCTS: Record<string, string> = {
+      "10027004": "天翼云电脑（政企版）",
+      "10026730": "弹性云主机 ECS",
+      "11061839": "星辰TokenHub",
+    };
 
     try {
       // 云电脑政企版（productId=10027004）
@@ -565,12 +578,27 @@ export class CtyunAdapter extends CloudDocAdapter {
       }
 
       // ECS（productId=10026730）
-      if (productId !== "10026730") {
+      if (productId === "10026730") {
+        return await this.getEcsPrice(options);
+      }
+
+      // Token 服务（productId=11061839）
+      if (productId === "11061839") {
+        // Token 服务暂无 API，直接从文档获取
         result.dataStatus = "no_data";
+        result.message = `请使用 search_documents 搜索"价格"关键词获取 Token 服务定价，productId: 11061839`;
         return result;
       }
 
-      return await this.getEcsPrice(options);
+      // 其他产品：从文档获取价格（返回 message 提示路径）
+      result.dataStatus = "no_data";
+      result.message = `天翼云「${productId}」暂无实时价格 API，请通过文档获取：\n` +
+        `1. search_documents(provider="ctyun", productId="${productId}", keyword="价格"或"计费")\n` +
+        `2. 从搜索结果中获取"计费模式"或"计费说明"页面的 pageId\n` +
+        `3. get_page_metadata(provider="ctyun", pageId=xxx) 获取 contentPath\n` +
+        `4. get_page_content(provider="ctyun", contentPath=xxx) 获取价格表`;
+
+      return result;
     } catch (error) {
       result.dataStatus = "no_data";
     }
@@ -1035,4 +1063,5 @@ export class CtyunAdapter extends CloudDocAdapter {
 
     return calculatedPrices;
   }
+
 }

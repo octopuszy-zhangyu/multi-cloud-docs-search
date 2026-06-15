@@ -206,7 +206,7 @@ src/
 | deepseek/minimax/kimi | 定价文档 | ✅ 可用 |
 | bailian | `/zh/model-studio/billing` | ✅ 文档解析 |
 | glm | `open.bigmodel.cn/pricing` SPA | ⚠️ SPA |
-| ctyun | 文档计费说明 | ✅ 内部价格计算器 API（ECS 规格询价 + 云电脑组件价格） |
+| ctyun | 文档计费说明 | ✅ ECS/云电脑：内部价格计算器 API；其他产品（EVS 等）：引导 agent 从文档获取 |
 | aliyun | 文档计费说明 | ✅ ECS：价格计算器 API（实例/系统盘/数据盘/带宽）；百炼：文档解析 |
 | volcengine | 文档计费规则 | ✅ GetTable API |
 | tencent | 文档计费说明 | ✅ CVM API |
